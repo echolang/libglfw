@@ -1,0 +1,32 @@
+/**
+ * Names whose `const char *` stays a pointer. Everything else that is a
+ * C string becomes an Echo `string` at bind time.
+ *
+ * Every name here must match a prototype in glfw3.h.
+ */
+
+namespace glfwgen::overrides;
+
+public function keep_c_string_names() : array<string>
+{
+    array<string> $a = array<string>();
+    $a[] = 'glfwGetProcAddress';
+
+    return $a;
+}
+
+public function keep_c_string(const string& $c_name) : bool
+{
+    array<string> $names = keep_c_string_names();
+    usize $i = 0;
+
+    while ($i < $names->count()) {
+        if ($names[$i] == $c_name) {
+            return true;
+        }
+
+        $i = $i + 1;
+    }
+
+    return false;
+}

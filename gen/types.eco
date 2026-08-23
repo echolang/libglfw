@@ -1,0 +1,453 @@
+/**
+ * C declarators to Echo types.
+ *
+ * Prefix / stars / suffix, interior-const dropped, `[N]` recorded (params
+ * decay; struct fields expand). `unsigned` / `signed` absorb into the base.
+ */
+
+namespace glfwgen::types;
+
+public struct CDecl
+{
+    string $base;
+    bool $base_const;
+    int32 $stars;
+    int32 $array_len;
+    string $name;
+
+    constructor()
+    {
+        $this->base = '';
+        $this->base_const = false;
+        $this->stars = 0;
+        $this->array_len = 0;
+        $this->name = '';
+    }
+}
+
+/**
+ * Known GLFW types the mapper consults. Procs are names; callbacks and
+ * structs (opaque handles included) map to the Echo spelling already chosen.
+ */
+public struct TypeEnv
+{
+    ordered_map<string, bool> $procs;
+    ordered_map<string, string> $callbacks;
+    ordered_map<string, string> $structs;
+    ordered_map<string, string> $raw_structs;
+
+    constructor()
+    {
+        $this->procs = ordered_map<string, bool>();
+        $this->callbacks = ordered_map<string, string>();
+        $this->structs = ordered_map<string, string>();
+        $this->raw_structs = ordered_map<string, string>();
+    }
+}
+
+/**
+ * Parse a C declarator: optional leading `const`, a (possibly multi-word)
+ * base, stars, a name, a trailing `[N]` / `[]`.
+ */
+public function parse_c_type(const string& $text) : result<CDecl, string>
+{
+    string $s = str::trim($text);
+    usize $i = 0;
+    CDecl $d = CDecl();
+    bool $saw_star = false;
+
+    skip_spaces($s, $i);
+
+    while (at_keyword($s, $i, 'const')) {
+        $d->base_const = true;
+        $i = $i + 5;
+        skip_spaces($s, $i);
+    }
+
+    if (at_keyword($s, $i, 'struct')) {
+        $i = $i + 6;
+        skip_spaces($s, $i);
+        string $ident = take_ident($s, $i);
+
+        if ($ident->empty()) {
+            return .error("missing struct name in '{$s}'");
+        }
+
+        $d->base = "struct {$ident}";
+    } else {
+        $d->base = take_ident($s, $i);
+
+        if ($d->base->empty()) {
+            return .error("missing type name in '{$s}'");
+        }
+
+        if ($d->base == 'unsigned' || $d->base == 'signed') {
+            skip_spaces($s, $i);
+            string $more = take_ident($s, $i);
+
+            if (!$more->empty() && $more != 'const') {
+                $d->base = "{$d->base} {$more}";
+            }
+        }
+    }
+
+    while (true) {
+        skip_spaces($s, $i);
+
+        if ($i >= $s->size()) {
+            break;
+        }
+
+        if (at_keyword($s, $i, 'const')) {
+            if (!$saw_star) {
+                $d->base_const = true;
+            }
+
+            $i = $i + 5;
+            continue;
+        }
+
+        uint8 $b = $s->byte($i);
+
+        if ($b == 42) {
+            $saw_star = true;
+            $d->stars = $d->stars + 1;
+            $i = $i + 1;
+            continue;
+        }
+
+        break;
+    }
+
+    skip_spaces($s, $i);
+    $d->name = take_ident($s, $i);
+
+    result<bool, string> $arr = take_array($s, $i, $d);
+
+    if ($arr->failed()) {
+        return .error($arr->failure());
+    }
+
+    skip_spaces($s, $i);
+
+    if ($i < $s->size()) {
+        uint8 $rest = $s->byte($i);
+
+        if ($rest != 44 && $rest != 41 && $rest != 59) {
+            return .error("trailing junk in '{$s}'");
+        }
+    }
+
+    return .ok($d);
+}
+
+/**
+ * Echo type of `$d`. `$as_return` lets a 0-star `void` be `void`.
+ * `$where` is the function or field name, for the diagnostic.
+ */
+public function echo_type(const CDecl& $d, bool $as_return, const string& $where, const TypeEnv& $env) : result<string, string>
+{
+    int32 $stars = $d->stars;
+
+    if ($d->array_len != 0) {
+        $stars = $stars + 1;
+    }
+
+    if ($env->procs->has($d->base)) {
+        string $inner = 'uint8';
+        int32 $n = $stars;
+
+        if ($n == 0) {
+            $n = 1;
+        }
+
+        return .ok(wrap_ptr($inner, $n));
+    }
+
+    if ($env->callbacks->has($d->base)) {
+        if ($stars != 0) {
+            return .error("{$where}: refusing extra indirection on callback '{$d->base}'");
+        }
+
+        return .ok($env->callbacks->get($d->base));
+    }
+
+    if ($env->structs->has($d->base)) {
+        if ($stars < 1) {
+            return .error("{$where}: struct '{$d->base}' by value is refused");
+        }
+
+        string $inner = $env->structs->get($d->base);
+
+        if ($d->base_const) {
+            $inner = "const {$inner}";
+        }
+
+        return .ok(wrap_ptr($inner, $stars));
+    }
+
+    if ($stars == 0) {
+        if ($d->base == 'void') {
+            if ($as_return) {
+                return .ok('void');
+            }
+
+            return .error("{$where}: void parameter");
+        }
+
+        return scalar_echo_type($d->base, $where);
+    }
+
+    string $inner = '';
+
+    if ($d->base == 'void') {
+        $inner = 'uint8';
+    } else {
+        string $s = guard scalar_echo_type($d->base, $where) else ($e) {
+            return .error($e);
+        }
+
+        $inner = $s;
+    }
+
+    if ($d->base_const) {
+        if (!$inner->starts('const ') && !$inner->starts('ptr<') && !$inner->starts('extern ')) {
+            $inner = "const {$inner}";
+        }
+    }
+
+    return .ok(wrap_ptr($inner, $stars));
+}
+
+public function wrap_ptr(const string& $inner, int32 $stars) : string
+{
+    string $t = $inner;
+    int32 $n = $stars;
+
+    while ($n > 0) {
+        $t = "ptr<{$t}>";
+        $n = $n - 1;
+    }
+
+    return $t;
+}
+
+function scalar_echo_type(const string& $base, const string& $where) : result<string, string>
+{
+    if ($base == 'int' || $base == 'signed' || $base == 'signed int' || $base == 'int32_t') {
+        return .ok('int32');
+    }
+
+    if ($base == 'unsigned' || $base == 'unsigned int' || $base == 'uint32_t') {
+        return .ok('uint32');
+    }
+
+    if ($base == 'unsigned short') {
+        return .ok('uint16');
+    }
+
+    if ($base == 'short' || $base == 'signed short') {
+        return .ok('int16');
+    }
+
+    if ($base == 'char' || $base == 'unsigned char') {
+        return .ok('uint8');
+    }
+
+    if ($base == 'signed char') {
+        return .ok('int8');
+    }
+
+    if ($base == 'float') {
+        return .ok('float32');
+    }
+
+    if ($base == 'double') {
+        return .ok('float64');
+    }
+
+    if ($base == 'size_t') {
+        return .ok('usize');
+    }
+
+    if ($base == 'uint64_t') {
+        return .ok('uint64');
+    }
+
+    if ($base == 'int64_t') {
+        return .ok('int64');
+    }
+
+    return .error("{$where}: unknown type '{$base}'");
+}
+
+function take_array(const string& $s, usize& $i, CDecl& $d) : result<bool, string>
+{
+    skip_spaces($s, $i);
+
+    if ($i >= $s->size() || $s->byte($i) != 91) {
+        return .ok(true);
+    }
+
+    $i = $i + 1;
+    skip_spaces($s, $i);
+
+    if ($i < $s->size() && $s->byte($i) == 93) {
+        $d->array_len = -1;
+        $i = $i + 1;
+
+        return .ok(true);
+    }
+
+    usize $start = $i;
+
+    while ($i < $s->size() && $s->byte($i) != 93) {
+        $i = $i + 1;
+    }
+
+    if ($i >= $s->size()) {
+        return .error("unterminated array bound in '{$s}'");
+    }
+
+    string $n = str::trim($s->sub($start, $i - $start));
+    int64 $v = guard str::int($n) else {
+        return .error("bad array bound '{$n}' in '{$s}'");
+    }
+
+    if ($v <= 0 || $v > 2147483647) {
+        return .error("array bound '{$n}' is not a positive int32");
+    }
+
+    $d->array_len = $v as int32;
+    $i = $i + 1;
+
+    return .ok(true);
+}
+
+public function skip_spaces(const string& $s, usize& $i) : void
+{
+    while ($i < $s->size()) {
+        uint8 $b = $s->byte($i);
+
+        if ($b == 32 || $b == 9 || $b == 10 || $b == 13) {
+            $i = $i + 1;
+        } else {
+            break;
+        }
+    }
+}
+
+public function at_keyword(const string& $s, usize $i, const string& $word) : bool
+{
+    usize $n = $word->size();
+
+    if ($i >= $s->size()) {
+        return false;
+    }
+
+    if ($n > $s->size() - $i) {
+        return false;
+    }
+
+    if ($s->sub($i, $n) != $word) {
+        return false;
+    }
+
+    if ($i + $n < $s->size()) {
+        if (is_ident_char($s->byte($i + $n))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+public function take_ident(const string& $s, usize& $i) : string
+{
+    usize $start = $i;
+
+    if ($i < $s->size() && is_ident_start($s->byte($i))) {
+        $i = $i + 1;
+
+        while ($i < $s->size() && is_ident_char($s->byte($i))) {
+            $i = $i + 1;
+        }
+    }
+
+    if ($i == $start) {
+        return '';
+    }
+
+    return $s->sub($start, $i - $start);
+}
+
+public function is_ident_start(uint8 $b) : bool
+{
+    if ($b >= 65 && $b <= 90) {
+        return true;
+    }
+
+    if ($b >= 97 && $b <= 122) {
+        return true;
+    }
+
+    if ($b == 95) {
+        return true;
+    }
+
+    return false;
+}
+
+public function is_ident_char(uint8 $b) : bool
+{
+    if (is_ident_start($b)) {
+        return true;
+    }
+
+    if ($b >= 48 && $b <= 57) {
+        return true;
+    }
+
+    return false;
+}
+
+public function is_echo_ident(const string& $s) : bool
+{
+    if ($s->empty()) {
+        return false;
+    }
+
+    if (!is_ident_start($s->byte(0))) {
+        return false;
+    }
+
+    usize $i = 1;
+
+    while ($i < $s->size()) {
+        if (!is_ident_char($s->byte($i))) {
+            return false;
+        }
+
+        $i = $i + 1;
+    }
+
+    return true;
+}
+
+/**
+ * `char *` / `const char *` (one star). Not `unsigned char *`, not `char **`.
+ */
+public function is_c_string(const CDecl& $d) : bool
+{
+    if ($d->base != 'char') {
+        return false;
+    }
+
+    int32 $stars = $d->stars;
+
+    if ($d->array_len != 0) {
+        $stars = $stars + 1;
+    }
+
+    return $stars == 1;
+}

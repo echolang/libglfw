@@ -1,0 +1,75 @@
+/**
+ * Spot-check the committed generated surface, plus init-free C calls that
+ * prove the vendored build + link + extern seam. No glfwInit: on macOS
+ * that touches the window server.
+ */
+
+test opaque_handles_are_distinct_null
+{
+    ptr<glfw::Window> $window = null;
+    ptr<glfw::Monitor> $monitor = null;
+    ptr<glfw::Cursor> $cursor = null;
+
+    assert($window:$ == null);
+    assert($monitor:$ == null);
+    assert($cursor:$ == null);
+}
+
+test constants
+{
+    assert(glfw::KEY_ESCAPE == 256);
+    assert(glfw::DONT_CARE == -1);
+    assert(glfw::TRUE == 1);
+    assert(glfw::FALSE == 0);
+    assert(glfw::VERSION_MAJOR == 3);
+    assert(glfw::VERSION_MINOR == 4);
+    assert(glfw::ANY_POSITION == -2147483648);
+}
+
+test get_version_is_3_4
+{
+    int32 $maj = 0;
+    int32 $min = 0;
+    int32 $rev = 0;
+    glfw::getVersion(&$maj, &$min, &$rev);
+
+    assert($maj == 3);
+    assert($min == 4);
+}
+
+test get_version_string_nonempty
+{
+    string $s = glfw::getVersionString();
+
+    assert(!$s->empty());
+    assert($s->contains('3.4'));
+}
+
+test get_error_before_init
+{
+    glfw::defaultWindowHints();
+    int32 $code = glfw::getError(null);
+
+    assert($code == glfw::NOT_INITIALIZED);
+}
+
+test error_message_before_init
+{
+    glfw::defaultWindowHints();
+    string $msg = glfw::error_message();
+
+    assert(!$msg->empty());
+}
+
+test gamepadstate_c_layout
+{
+    assert(mem::size<glfw::__Gamepadstate>() == 40);
+    assert(mem::align<glfw::__Gamepadstate>() == 4);
+
+    glfw::Gamepadstate $state = glfw::Gamepadstate();
+    int32 $ok = glfw::getGamepadState(0, $state);
+
+    assert($ok == glfw::FALSE);
+    assert($state->buttons->count() == 15);
+    assert($state->axes->count() == 6);
+}

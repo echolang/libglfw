@@ -1,0 +1,93 @@
+/*
+ * libglfw - GLFW 3.4 bindings for Echo.
+ *
+ * The C library is vendored and compiled in. Bindings are generated from
+ * include/GLFW/glfw3.h. A consumer writes `#[depends: "../libglfw"]` and
+ * nothing else.
+ */
+
+#[module: "libglfw"]
+#[version: "0.1.0"]
+#[epm::license: "MIT"]
+#[epm::description: "GLFW 3.4 bindings for Echo, C library vendored and compiled in"]
+
+#[cc: include "third_party/glfw/include"]
+#[cc: include "third_party/glfw/src"]
+
+#[cc: sources [
+    "third_party/glfw/src/context.c",
+    "third_party/glfw/src/init.c",
+    "third_party/glfw/src/input.c",
+    "third_party/glfw/src/monitor.c",
+    "third_party/glfw/src/platform.c",
+    "third_party/glfw/src/vulkan.c",
+    "third_party/glfw/src/window.c",
+    "third_party/glfw/src/egl_context.c",
+    "third_party/glfw/src/osmesa_context.c",
+    "third_party/glfw/src/null_init.c",
+    "third_party/glfw/src/null_monitor.c",
+    "third_party/glfw/src/null_window.c",
+    "third_party/glfw/src/null_joystick.c"
+]]
+
+#[if: os == darwin]
+#[cc: define { _GLFW_COCOA: 1 }]
+#[cc: sources [
+    "third_party/glfw/src/cocoa_init.m",
+    "third_party/glfw/src/cocoa_joystick.m",
+    "third_party/glfw/src/cocoa_monitor.m",
+    "third_party/glfw/src/cocoa_window.m",
+    "third_party/glfw/src/nsgl_context.m",
+    "third_party/glfw/src/cocoa_time.c",
+    "third_party/glfw/src/posix_module.c",
+    "third_party/glfw/src/posix_thread.c"
+]]
+#[link: framework "Cocoa"]
+#[link: framework "IOKit"]
+#[link: framework "CoreFoundation"]
+#[link: framework "QuartzCore"]
+#[link: framework "OpenGL"]
+#[elif: os == linux]
+// X11 backend. Wayland needs CMake-generated protocol headers and is
+// out of scope. GLFW dlopens libX11 itself; X11 headers are needed only
+// to compile. Native build still needs -ldl / -lpthread / -lm; runtime:
+// process is the JIT half (glibc folded them into libc).
+#[cc: define { _GLFW_X11: 1 }]
+#[cc: sources [
+    "third_party/glfw/src/x11_init.c",
+    "third_party/glfw/src/x11_monitor.c",
+    "third_party/glfw/src/x11_window.c",
+    "third_party/glfw/src/xkb_unicode.c",
+    "third_party/glfw/src/glx_context.c",
+    "third_party/glfw/src/linux_joystick.c",
+    "third_party/glfw/src/posix_time.c",
+    "third_party/glfw/src/posix_thread.c",
+    "third_party/glfw/src/posix_module.c",
+    "third_party/glfw/src/posix_poll.c"
+]]
+#[link: lib { name: "m", runtime: process }]
+#[link: lib { name: "dl", runtime: process }]
+#[link: lib { name: "pthread", runtime: process }]
+#[elif: os == windows]
+#[cc: define { _GLFW_WIN32: 1, UNICODE: 1, _UNICODE: 1 }]
+#[cc: sources [
+    "third_party/glfw/src/win32_init.c",
+    "third_party/glfw/src/win32_joystick.c",
+    "third_party/glfw/src/win32_module.c",
+    "third_party/glfw/src/win32_monitor.c",
+    "third_party/glfw/src/win32_time.c",
+    "third_party/glfw/src/win32_thread.c",
+    "third_party/glfw/src/win32_window.c",
+    "third_party/glfw/src/wgl_context.c"
+]]
+#[link: lib "gdi32"]
+#[link: lib "user32"]
+#[link: lib "shell32"]
+#[end]
+
+#[sources: "src/*.eco"]
+
+#[target: test] {
+    #[sources: "tests/*.eco"]
+    #[depends: "gen"]
+}

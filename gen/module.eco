@@ -1,0 +1,19 @@
+/*
+ * Generator for src/glfw.eco. Own module so a stale or missing generated
+ * file cannot brick regeneration.
+ */
+
+#[module: "libglfw-gen"]
+#[version: "0.1.0"]
+
+#[sources: [
+    "header.eco",
+    "types.eco",
+    "model.eco",
+    "emit.eco",
+    "overrides.eco"
+]]
+
+#[target: exe { name: "generate", entry: "main.eco" }] {
+    #[sources: "main.eco"]
+}

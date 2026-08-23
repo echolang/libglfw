@@ -1,0 +1,4 @@
+#[module: "libglfw-examples"]
+#[depends: ".."]
+#[depends: "../../libopengl"]
+#[sources: "clear.eco"]

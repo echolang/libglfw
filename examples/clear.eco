@@ -1,0 +1,81 @@
+/*
+ * Open a window, load OpenGL through glfwGetProcAddress, clear dark grey.
+ *
+ *   cd examples && echoc run -- --frames 120
+ *
+ * `--frames N` (default 300) closes the window after N swaps so the
+ * example can be verified without a click.
+ */
+
+function parse_frames(const array<string>& $argv) : result<int32, string>
+{
+    int32 $frames = 300;
+    usize $i = 1;
+
+    while ($i < $argv->count()) {
+        string $a = $argv[$i];
+
+        if ($a == '--frames') {
+            if ($i + 1 >= $argv->count()) {
+                return .error('--frames needs a value');
+            }
+
+            int64 $n = guard str::int($argv[$i + 1]) else {
+                return .error('--frames needs an integer');
+            }
+
+            int32 $v = $n as int32;
+            $frames = $v;
+            $i = $i + 2;
+            continue;
+        }
+
+        return .error("unknown flag '{$a}'");
+    }
+
+    return .ok($frames);
+}
+
+int32 $frames = guard parse_frames(std::env::argv()) else ($e) {
+    die($e);
+}
+
+if (glfw::init() != glfw::TRUE) {
+    die(glfw::error_message());
+}
+
+glfw::windowHint(glfw::CONTEXT_VERSION_MAJOR, 3);
+glfw::windowHint(glfw::CONTEXT_VERSION_MINOR, 3);
+glfw::windowHint(glfw::OPENGL_PROFILE, glfw::OPENGL_CORE_PROFILE);
+glfw::windowHint(glfw::OPENGL_FORWARD_COMPAT, glfw::TRUE);
+
+ptr<glfw::Window> $window = glfw::createWindow(800, 600, 'libglfw', null, null);
+
+if ($window:$ == null) {
+    glfw::terminate();
+    die(glfw::error_message());
+}
+
+glfw::makeContextCurrent($window);
+glfw::swapInterval(1);
+
+usize $loaded = gl::load(&glfw::getProcAddress);
+
+if ($loaded == 0) {
+    glfw::destroyWindow($window);
+    glfw::terminate();
+    die('gl::load resolved no entry points');
+}
+
+int32 $frame = 0;
+
+while ($frame < $frames && glfw::windowShouldClose($window) == glfw::FALSE) {
+    gl::ClearColor(0.25, 0.25, 0.25, 1.0);
+    gl::Clear(gl::COLOR_BUFFER_BIT);
+    glfw::swapBuffers($window);
+    glfw::pollEvents();
+    $frame = $frame + 1;
+}
+
+glfw::destroyWindow($window);
+glfw::terminate();

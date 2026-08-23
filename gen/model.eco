@@ -1,0 +1,550 @@
+/**
+ * Typed model and naming.
+ *
+ * Strip-prefix: `GLFW_` off constants, `glfw` off functions (first byte
+ * lowercased), `GLFW` off structs (first byte uppercased). Per-kind
+ * collision maps, libopengl's ident_after_strip discipline.
+ */
+
+namespace glfwgen::model;
+
+use glfwgen::header;
+use glfwgen::overrides;
+use glfwgen::types;
+
+public struct Constant
+{
+    string $c_name;
+    string $echo_name;
+    int32 $value;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->echo_name = '';
+        $this->value = 0;
+    }
+}
+
+public struct Field
+{
+    string $echo_name;
+    string $echo_type;
+
+    constructor()
+    {
+        $this->echo_name = '';
+        $this->echo_type = '';
+    }
+
+    constructor(string $echo_name, string $echo_type)
+    {
+        $this->echo_name = $echo_name;
+        $this->echo_type = $echo_type;
+    }
+}
+
+public struct StructDef
+{
+    string $c_name;
+    string $echo_name;
+    array<Field> $fields;
+    bool $hand_written;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->echo_name = '';
+        $this->fields = array<Field>();
+        $this->hand_written = false;
+    }
+}
+
+public struct Callback
+{
+    string $c_name;
+    string $echo_type;
+    usize $n_args;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->echo_type = '';
+        $this->n_args = 0;
+    }
+}
+
+public struct Param
+{
+    string $echo_name;
+    string $echo_type;
+    string $extern_type;
+    bool $to_cstr;
+
+    constructor()
+    {
+        $this->echo_name = '';
+        $this->echo_type = '';
+        $this->extern_type = '';
+        $this->to_cstr = false;
+    }
+
+    constructor(string $echo_name, string $echo_type, string $extern_type, bool $to_cstr)
+    {
+        $this->echo_name = $echo_name;
+        $this->echo_type = $echo_type;
+        $this->extern_type = $extern_type;
+        $this->to_cstr = $to_cstr;
+    }
+}
+
+public struct Func
+{
+    string $c_name;
+    string $echo_name;
+    string $ret_echo;
+    string $ret_extern;
+    bool $str_out;
+    bool $skip_wrapper;
+    array<Param> $params;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->echo_name = '';
+        $this->ret_echo = 'void';
+        $this->ret_extern = 'void';
+        $this->str_out = false;
+        $this->skip_wrapper = false;
+        $this->params = array<Param>();
+    }
+}
+
+public struct Model
+{
+    array<Constant> $consts;
+    array<StructDef> $structs;
+    array<Callback> $callbacks;
+    array<Func> $funcs;
+    types::TypeEnv $env;
+
+    constructor()
+    {
+        $this->consts = array<Constant>();
+        $this->structs = array<StructDef>();
+        $this->callbacks = array<Callback>();
+        $this->funcs = array<Func>();
+        $this->env = types::TypeEnv();
+    }
+}
+
+public function from_header(const string& $text) : result<Model, string>
+{
+    header::Scan $scan = guard header::scan($text) else ($e) {
+        return .error($e);
+    }
+
+    return bind($scan);
+}
+
+public function bind(const header::Scan& $scan) : result<Model, string>
+{
+    Model $m = Model();
+    ordered_map<string, string> $const_from = ordered_map<string, string>();
+    ordered_map<string, string> $fn_from = ordered_map<string, string>();
+    ordered_map<string, string> $struct_from = ordered_map<string, string>();
+
+    usize $i = 0;
+
+    while ($i < $scan->consts->count()) {
+        header::RawConst $raw = $scan->consts[$i];
+        string $echo = guard const_name($raw->c_name) else ($e) {
+            return .error($e);
+        }
+
+        if ($const_from->has($echo)) {
+            return .error("stripped const name '{$echo}' collides: {$const_from->get($echo)} and {$raw->c_name}");
+        }
+
+        $const_from[$echo] = $raw->c_name;
+        Constant $c = Constant();
+        $c->c_name = $raw->c_name;
+        $c->echo_name = $echo;
+        $c->value = $raw->value;
+        $m->consts[] = $c;
+        $i = $i + 1;
+    }
+
+    $i = 0;
+
+    while ($i < $scan->opaques->count()) {
+        header::RawOpaque $raw = $scan->opaques[$i];
+        string $echo = guard struct_name($raw->c_name) else ($e) {
+            return .error($e);
+        }
+
+        if ($struct_from->has($echo)) {
+            return .error("stripped struct name '{$echo}' collides: {$struct_from->get($echo)} and {$raw->c_name}");
+        }
+
+        $struct_from[$echo] = $raw->c_name;
+        $m->env->structs[$raw->c_name] = $echo;
+        StructDef $st = StructDef();
+        $st->c_name = $raw->c_name;
+        $st->echo_name = $echo;
+        $m->structs[] = $st;
+        $i = $i + 1;
+    }
+
+    $i = 0;
+
+    while ($i < $scan->callbacks->count()) {
+        string $cn = $scan->callbacks[$i]->c_name;
+
+        if ($cn == 'GLFWglproc' || $cn == 'GLFWvkproc') {
+            $m->env->procs[$cn] = true;
+        }
+
+        $i = $i + 1;
+    }
+
+    $i = 0;
+
+    while ($i < $scan->structs->count()) {
+        header::RawStruct $raw = $scan->structs[$i];
+        string $echo = guard struct_name($raw->c_name) else ($e) {
+            return .error($e);
+        }
+
+        if ($struct_from->has($echo)) {
+            return .error("stripped struct name '{$echo}' collides: {$struct_from->get($echo)} and {$raw->c_name}");
+        }
+
+        $struct_from[$echo] = $raw->c_name;
+        $m->env->structs[$raw->c_name] = $echo;
+        $i = $i + 1;
+    }
+
+    $i = 0;
+
+    while ($i < $scan->callbacks->count()) {
+        header::RawCallback $raw = $scan->callbacks[$i];
+
+        if ($m->env->procs->has($raw->c_name)) {
+            Callback $cb = Callback();
+            $cb->c_name = $raw->c_name;
+            $cb->echo_type = 'ptr<uint8>';
+            $cb->n_args = $raw->params->count();
+            $m->callbacks[] = $cb;
+            $i = $i + 1;
+            continue;
+        }
+
+        string $ty = guard callback_echo_type($raw, $m->env) else ($e) {
+            return .error($e);
+        }
+
+        $m->env->callbacks[$raw->c_name] = $ty;
+        Callback $cb = Callback();
+        $cb->c_name = $raw->c_name;
+        $cb->echo_type = $ty;
+        $cb->n_args = $raw->params->count();
+        $m->callbacks[] = $cb;
+        $i = $i + 1;
+    }
+
+    $i = 0;
+
+    while ($i < $scan->structs->count()) {
+        header::RawStruct $raw = $scan->structs[$i];
+        StructDef $st = StructDef();
+        $st->c_name = $raw->c_name;
+        $st->echo_name = $m->env->structs->get($raw->c_name);
+
+        usize $f = 0;
+
+        while ($f < $raw->fields->count()) {
+            result<bool, string> $ok = bind_fields($raw->fields[$f], $st, $m->env);
+
+            if ($ok->failed()) {
+                return .error($ok->failure());
+            }
+
+            $f = $f + 1;
+        }
+
+        if ($st->hand_written) {
+            $m->env->raw_structs[$raw->c_name] = "__{$st->echo_name}";
+        }
+
+        $m->structs[] = $st;
+        $i = $i + 1;
+    }
+
+    $i = 0;
+
+    while ($i < $scan->funcs->count()) {
+        header::RawFunc $raw = $scan->funcs[$i];
+        string $echo = guard fn_name($raw->c_name) else ($e) {
+            return .error($e);
+        }
+
+        if ($fn_from->has($echo)) {
+            return .error("stripped function name '{$echo}' collides: {$fn_from->get($echo)} and {$raw->c_name}");
+        }
+
+        $fn_from[$echo] = $raw->c_name;
+        Func $fn = guard bind_func($raw, $echo, $m->env) else ($e) {
+            return .error($e);
+        }
+
+        $m->funcs[] = $fn;
+        $i = $i + 1;
+    }
+
+    return .ok($m);
+}
+
+public function const_name(const string& $c) : result<string, string>
+{
+    string $n = $c;
+
+    if ($n->starts('GLFW_')) {
+        $n = $n->sub(5, $n->size() - 5);
+    }
+
+    return ident_after_strip($c, $n, 'const');
+}
+
+public function fn_name(const string& $c) : result<string, string>
+{
+    string $n = $c;
+
+    if ($n->starts('glfw')) {
+        $n = $n->sub(4, $n->size() - 4);
+    }
+
+    $n = with_first($n, false);
+
+    return ident_after_strip($c, $n, 'function');
+}
+
+public function struct_name(const string& $c) : result<string, string>
+{
+    string $n = $c;
+
+    if ($n->starts('GLFW')) {
+        $n = $n->sub(4, $n->size() - 4);
+    }
+
+    $n = with_first($n, true);
+
+    return ident_after_strip($c, $n, 'struct');
+}
+
+public function ident_after_strip(const string& $c, const string& $stripped, const string& $kind) : result<string, string>
+{
+    string $n = $stripped;
+
+    if ($n->empty()) {
+        return .error("{$kind} '{$c}' strips to an empty name");
+    }
+
+    if (starts_digit($n)) {
+        $n = "_{$n}";
+    }
+
+    if (!types::is_echo_ident($n)) {
+        return .error("{$kind} '{$c}' strips to non-identifier '{$n}'");
+    }
+
+    return .ok($n);
+}
+
+function callback_echo_type(const header::RawCallback& $raw, const types::TypeEnv& $env) : result<string, string>
+{
+    types::CDecl $ret_d = guard types::parse_c_type($raw->ret_text) else ($e) {
+        return .error("{$raw->c_name} return: {$e}");
+    }
+
+    string $ret = guard types::echo_type($ret_d, true, $raw->c_name, $env) else ($e) {
+        return .error($e);
+    }
+
+    string $sig = $ret;
+    $sig->append('(');
+    usize $i = 0;
+
+    while ($i < $raw->params->count()) {
+        types::CDecl $d = guard types::parse_c_type($raw->params[$i]) else ($e) {
+            return .error("{$raw->c_name} param: {$e}");
+        }
+
+        string $ty = guard types::echo_type($d, false, $raw->c_name, $env) else ($e) {
+            return .error($e);
+        }
+
+        if ($i > 0) {
+            $sig->append(', ');
+        }
+
+        $sig->append($ty);
+        $i = $i + 1;
+    }
+
+    $sig->append(')');
+
+    return .ok("extern function<{$sig}>?");
+}
+
+public function param_name(const string& $raw, usize $index) : string
+{
+    if (types::is_echo_ident($raw) && $raw != 'this') {
+        return $raw;
+    }
+
+    return "p{$index}";
+}
+
+function bind_fields(const header::RawField& $raw, StructDef& $st, const types::TypeEnv& $env) : result<bool, string>
+{
+    types::CDecl $d = $raw->decl;
+
+    if ($d->array_len > 0) {
+        $st->hand_written = true;
+
+        return .ok(true);
+    }
+
+    string $ty = guard types::echo_type($d, false, "{$st->c_name}.{$d->name}", $env) else ($e) {
+        return .error($e);
+    }
+
+    $st->fields[] = Field($d->name, $ty);
+
+    return .ok(true);
+}
+
+function bind_func(const header::RawFunc& $raw, const string& $echo, const types::TypeEnv& $env) : result<Func, string>
+{
+    types::CDecl $ret_d = guard types::parse_c_type($raw->ret_text) else ($e) {
+        return .error("{$raw->c_name} return: {$e}");
+    }
+
+    string $ret_extern = guard types::echo_type($ret_d, true, $raw->c_name, $env) else ($e) {
+        return .error($e);
+    }
+
+    if ($env->raw_structs->has($ret_d->base)) {
+        $ret_extern = raw_echo_type($ret_d, $env);
+    }
+
+    Func $fn = Func();
+    $fn->c_name = $raw->c_name;
+    $fn->echo_name = $echo;
+    $fn->ret_extern = $ret_extern;
+    $fn->ret_echo = $ret_extern;
+
+    if (types::is_c_string($ret_d) && !overrides::keep_c_string($raw->c_name)) {
+        $fn->ret_echo = 'string';
+        $fn->str_out = true;
+    }
+
+    map<string, bool> $used = map<string, bool>();
+    usize $i = 0;
+
+    while ($i < $raw->params->count()) {
+        types::CDecl $d = guard types::parse_c_type($raw->params[$i]) else ($e) {
+            return .error("{$raw->c_name} param: {$e}");
+        }
+
+        string $extern_ty = guard types::echo_type($d, false, $raw->c_name, $env) else ($e) {
+            return .error($e);
+        }
+
+        string $echo_ty = $extern_ty;
+        bool $to_cstr = false;
+
+        if ($env->raw_structs->has($d->base)) {
+            $extern_ty = raw_echo_type($d, $env);
+            $fn->skip_wrapper = true;
+        } else if (types::is_c_string($d) && !overrides::keep_c_string($raw->c_name)) {
+            $echo_ty = 'string';
+            $to_cstr = true;
+        }
+
+        string $nm = param_name($d->name, $i);
+
+        if ($used->has($nm)) {
+            $nm = "p{$i}";
+        }
+
+        $used[$nm] = true;
+        $fn->params[] = Param($nm, $echo_ty, $extern_ty, $to_cstr);
+        $i = $i + 1;
+    }
+
+    return .ok($fn);
+}
+
+function raw_echo_type(const types::CDecl& $d, const types::TypeEnv& $env) : string
+{
+    int32 $stars = $d->stars;
+
+    if ($d->array_len != 0) {
+        $stars = $stars + 1;
+    }
+
+    string $inner = $env->raw_structs->get($d->base);
+
+    if ($d->base_const) {
+        $inner = "const {$inner}";
+    }
+
+    return types::wrap_ptr($inner, $stars);
+}
+
+function with_first(const string& $s, bool $upper) : string
+{
+    if ($s->empty()) {
+        return $s;
+    }
+
+    int32 $b = $s->byte(0);
+
+    if ($upper) {
+        if ($b >= 97 && $b <= 122) {
+            $b = $b - 32;
+        }
+    } else {
+        if ($b >= 65 && $b <= 90) {
+            $b = $b + 32;
+        }
+    }
+
+    string $out = '';
+    $out->push($b as uint8);
+
+    if ($s->size() > 1) {
+        $out->append($s->sub(1, $s->size() - 1));
+    }
+
+    return $out;
+}
+
+function starts_digit(const string& $s) : bool
+{
+    if ($s->empty()) {
+        return false;
+    }
+
+    uint8 $b = $s->byte(0);
+
+    if ($b >= 48 && $b <= 57) {
+        return true;
+    }
+
+    return false;
+}
+
+

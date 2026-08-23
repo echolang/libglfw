@@ -1,0 +1,118 @@
+/**
+ * Hand-written surface: C-string helper used by generated wrappers, the
+ * gamepad fill-struct (C layout is not an Echo array), and error_message.
+ */
+
+namespace glfw;
+
+function __str_or_empty(ptr<const uint8> $p) : string
+{
+    if ($p:$ == null) {
+        return '';
+    }
+
+    return str::from($p:$);
+}
+
+public function error_message() : string
+{
+    ptr<const uint8> $description = null;
+    getError(&$description);
+
+    return __str_or_empty($description);
+}
+
+/**
+ * C `GLFWgamepadstate`: 15 bytes of buttons, 1 byte of padding, 6 floats.
+ * GLFW writes this through a pointer; the public type copies into arrays.
+ */
+internal struct __Gamepadstate
+{
+    uint8 $buttons0;
+    uint8 $buttons1;
+    uint8 $buttons2;
+    uint8 $buttons3;
+    uint8 $buttons4;
+    uint8 $buttons5;
+    uint8 $buttons6;
+    uint8 $buttons7;
+    uint8 $buttons8;
+    uint8 $buttons9;
+    uint8 $buttons10;
+    uint8 $buttons11;
+    uint8 $buttons12;
+    uint8 $buttons13;
+    uint8 $buttons14;
+    uint8 $pad;
+    float32 $axes0;
+    float32 $axes1;
+    float32 $axes2;
+    float32 $axes3;
+    float32 $axes4;
+    float32 $axes5;
+
+    constructor()
+    {
+        $this->buttons0 = 0;
+        $this->buttons1 = 0;
+        $this->buttons2 = 0;
+        $this->buttons3 = 0;
+        $this->buttons4 = 0;
+        $this->buttons5 = 0;
+        $this->buttons6 = 0;
+        $this->buttons7 = 0;
+        $this->buttons8 = 0;
+        $this->buttons9 = 0;
+        $this->buttons10 = 0;
+        $this->buttons11 = 0;
+        $this->buttons12 = 0;
+        $this->buttons13 = 0;
+        $this->buttons14 = 0;
+        $this->pad = 0;
+        $this->axes0 = 0.0;
+        $this->axes1 = 0.0;
+        $this->axes2 = 0.0;
+        $this->axes3 = 0.0;
+        $this->axes4 = 0.0;
+        $this->axes5 = 0.0;
+    }
+}
+
+public struct Gamepadstate
+{
+    array<uint8> $buttons;
+    array<float32> $axes;
+
+    constructor()
+    {
+        $this->buttons = array<uint8>();
+        $this->axes = array<float32>();
+    }
+}
+
+public function getGamepadState(int32 $jid, Gamepadstate& $state) : int32
+{
+    __Gamepadstate $raw = __Gamepadstate();
+    int32 $ok = c_getGamepadState($jid, &$raw);
+
+    $state->buttons = array<uint8>();
+    $state->axes = array<float32>();
+
+    ptr<uint8> $buttons = &$raw->buttons0;
+    ptr<float32> $axes = &$raw->axes0;
+    usize $i = 0;
+
+    while ($i < 15) {
+        $state->buttons[] = $buttons:$[$i];
+        $i = $i + 1;
+    }
+
+    $i = 0;
+
+    while ($i < 6) {
+        $state->axes[] = $axes:$[$i];
+        $i = $i + 1;
+    }
+
+    return $ok;
+}

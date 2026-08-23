@@ -1,0 +1,868 @@
+/**
+ * glfw3.h scanner.
+ *
+ * Strip comments, then a line-shaped walk with an `#if` depth counter.
+ * Declarations are consumed only at depth 1: inside the include guard,
+ * under no other conditional. That skips `extern "C"`, the
+ * `GLFW_INCLUDE_*` front matter, and the whole `VK_VERSION_1_0` block.
+ */
+
+namespace glfwgen::header;
+
+use glfwgen::types;
+
+const uint64 U32_SIGN = 2147483648;
+const uint64 U32_MOD = 4294967296;
+
+public struct RawConst
+{
+    string $c_name;
+    int32 $value;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->value = 0;
+    }
+
+    constructor(string $c_name, int32 $value)
+    {
+        $this->c_name = $c_name;
+        $this->value = $value;
+    }
+}
+
+public struct RawField
+{
+    string $text;
+    types::CDecl $decl;
+
+    constructor()
+    {
+        $this->text = '';
+        $this->decl = types::CDecl();
+    }
+}
+
+public struct RawStruct
+{
+    string $c_name;
+    array<RawField> $fields;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->fields = array<RawField>();
+    }
+}
+
+public struct RawCallback
+{
+    string $c_name;
+    string $ret_text;
+    array<string> $params;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->ret_text = '';
+        $this->params = array<string>();
+    }
+}
+
+public struct RawOpaque
+{
+    string $c_name;
+
+    constructor()
+    {
+        $this->c_name = '';
+    }
+
+    constructor(string $c_name)
+    {
+        $this->c_name = $c_name;
+    }
+}
+
+public struct RawFunc
+{
+    string $c_name;
+    string $ret_text;
+    array<string> $params;
+
+    constructor()
+    {
+        $this->c_name = '';
+        $this->ret_text = '';
+        $this->params = array<string>();
+    }
+}
+
+public struct Scan
+{
+    array<RawConst> $consts;
+    array<RawOpaque> $opaques;
+    array<RawCallback> $callbacks;
+    array<RawStruct> $structs;
+    array<RawFunc> $funcs;
+    ordered_map<string, int32> $const_by_name;
+
+    constructor()
+    {
+        $this->consts = array<RawConst>();
+        $this->opaques = array<RawOpaque>();
+        $this->callbacks = array<RawCallback>();
+        $this->structs = array<RawStruct>();
+        $this->funcs = array<RawFunc>();
+        $this->const_by_name = ordered_map<string, int32>();
+    }
+}
+
+public function scan(const string& $src) : result<Scan, string>
+{
+    string $text = guard strip_comments($src) else ($e) {
+        return .error($e);
+    }
+
+    str::parts $bits = str::split($text, '\n');
+    array<string> $lines = $bits->owned();
+    Scan $out = Scan();
+    int32 $depth = 0;
+    usize $li = 0;
+    usize $n = $lines->count();
+
+    while ($li < $n) {
+        string $t = str::trim($lines[$li]);
+
+        if ($t->empty()) {
+            $li = $li + 1;
+            continue;
+        }
+
+        if ($t->byte(0) == 35) {
+            result<bool, string> $pp = handle_pp($t, $depth, $out);
+
+            if ($pp->failed()) {
+                return .error($pp->failure());
+            }
+
+            $li = $li + 1;
+            continue;
+        }
+
+        if ($depth != 1) {
+            $li = $li + 1;
+            continue;
+        }
+
+        if ($t->starts('GLFWAPI') || $t->starts('typedef')) {
+            string $stmt = guard take_statement($lines, $li) else ($e) {
+                return .error($e);
+            }
+
+            result<bool, string> $got = consume_decl($stmt, $out);
+
+            if ($got->failed()) {
+                return .error($got->failure());
+            }
+
+            continue;
+        }
+
+        $li = $li + 1;
+    }
+
+    if ($depth != 0) {
+        return .error("unterminated #if in glfw3.h (depth {$depth})");
+    }
+
+    return .ok($out);
+}
+
+function handle_pp(const string& $t, int32& $depth, Scan& $out) : result<bool, string>
+{
+    usize $i = 1;
+    types::skip_spaces($t, $i);
+    string $kind = types::take_ident($t, $i);
+
+    if ($kind == 'if' || $kind == 'ifdef' || $kind == 'ifndef') {
+        $depth = $depth + 1;
+
+        return .ok(true);
+    }
+
+    if ($kind == 'endif') {
+        $depth = $depth - 1;
+
+        if ($depth < 0) {
+            return .error('unmatched #endif in glfw3.h');
+        }
+
+        return .ok(true);
+    }
+
+    if ($kind == 'elif' || $kind == 'else') {
+        return .ok(true);
+    }
+
+    if ($kind == 'define' && $depth == 1) {
+        types::skip_spaces($t, $i);
+        string $name = types::take_ident($t, $i);
+
+        if ($name->starts('GLFW')) {
+            types::skip_spaces($t, $i);
+            string $val = str::trim($t->sub($i, $t->size() - $i));
+            result<bool, string> $ok = take_define($name, $val, $out);
+
+            if ($ok->failed()) {
+                return .error($ok->failure());
+            }
+
+            return .ok(true);
+        }
+    }
+
+    return .ok(true);
+}
+
+function take_define(const string& $name, const string& $val, Scan& $out) : result<bool, string>
+{
+    if ($val->empty()) {
+        return .error("depth-1 #define {$name} is not a value define");
+    }
+
+    int32 $v = guard eval_value($val, $out->const_by_name) else ($e) {
+        return .error("#define {$name}: {$e}");
+    }
+
+    $out->const_by_name[$name] = $v;
+    $out->consts[] = RawConst($name, $v);
+
+    return .ok(true);
+}
+
+public function eval_value(const string& $text, const ordered_map<string, int32>& $known) : result<int32, string>
+{
+    string $s = str::trim($text);
+
+    if ($s->empty()) {
+        return .error('empty constant value');
+    }
+
+    if ($s->byte(0) == 40) {
+        return eval_or($s, $known);
+    }
+
+    if (types::is_ident_start($s->byte(0))) {
+        if (!$known->has($s)) {
+            return .error("unknown identifier '{$s}'");
+        }
+
+        return .ok($known->get($s));
+    }
+
+    return parse_number($s);
+}
+
+function eval_or(const string& $s, const ordered_map<string, int32>& $known) : result<int32, string>
+{
+    usize $i = 0;
+
+    if ($i >= $s->size() || $s->byte($i) != 40) {
+        return .error("expected '(' in '{$s}'");
+    }
+
+    $i = $i + 1;
+    int64 $acc = 0;
+    bool $first = true;
+
+    while (true) {
+        types::skip_spaces($s, $i);
+
+        if ($i >= $s->size()) {
+            return .error("unterminated '(' in '{$s}'");
+        }
+
+        if ($s->byte($i) == 41) {
+            $i = $i + 1;
+            break;
+        }
+
+        if (!$first) {
+            if ($s->byte($i) != 124) {
+                return .error("expected '|' in '{$s}'");
+            }
+
+            $i = $i + 1;
+            types::skip_spaces($s, $i);
+        }
+
+        string $name = types::take_ident($s, $i);
+
+        if ($name->empty()) {
+            return .error("expected identifier in '{$s}'");
+        }
+
+        if (!$known->has($name)) {
+            return .error("unknown identifier '{$name}'");
+        }
+
+        int64 $v = $known->get($name);
+
+        if ($first) {
+            $acc = $v;
+            $first = false;
+        } else {
+            $acc = $acc | $v;
+        }
+    }
+
+    types::skip_spaces($s, $i);
+
+    if ($i != $s->size()) {
+        return .error("trailing junk after ')' in '{$s}'");
+    }
+
+    if ($first) {
+        return .error("empty '(...)' in '{$s}'");
+    }
+
+    return fit_int32_signed($acc);
+}
+
+public function parse_number(const string& $text) : result<int32, string>
+{
+    string $s = str::trim($text);
+
+    if ($s->empty()) {
+        return .error('empty number');
+    }
+
+    if ($s->size() >= 2 && $s->byte(0) == 48 && ($s->byte(1) == 120 || $s->byte(1) == 88)) {
+        uint64 $v = guard str::uint($s) else {
+            return .error("not a hex integer: {$s}");
+        }
+
+        return fit_int32_u($v);
+    }
+
+    int64 $n = guard str::int($s) else {
+        return .error("not an integer: {$s}");
+    }
+
+    return fit_int32_signed($n);
+}
+
+public function fit_int32_u(uint64 $v) : result<int32, string>
+{
+    if ($v >= U32_SIGN) {
+        if ($v >= U32_MOD) {
+            return .error("value {$v} does not fit in 32-bit two's complement");
+        }
+
+        int64 $mag = (U32_MOD - $v) as int64;
+        int64 $neg = 0 - $mag;
+        int32 $folded = $neg as int32;
+
+        return .ok($folded);
+    }
+
+    int64 $wide = $v as int64;
+    int32 $small = $wide as int32;
+
+    return .ok($small);
+}
+
+public function fit_int32_signed(int64 $n) : result<int32, string>
+{
+    if ($n > 2147483647 || $n < -2147483648) {
+        return .error("value {$n} does not fit in int32");
+    }
+
+    return .ok($n as int32);
+}
+
+function take_statement(const array<string>& $lines, usize& $li) : result<string, string>
+{
+    string $acc = '';
+    usize $n = $lines->count();
+
+    while ($li < $n) {
+        string $line = $lines[$li];
+        string $t = str::trim($line);
+
+        if ($acc->size() > 0 && $t->size() > 0 && $t->byte(0) == 35) {
+            return .error("preprocessor line inside a declaration: {$t}");
+        }
+
+        if ($acc->size() > 0) {
+            $acc->append('\n');
+        }
+
+        $acc->append($line);
+        $li = $li + 1;
+
+        if (statement_done($acc)) {
+            return .ok($acc);
+        }
+    }
+
+    return .error('unterminated declaration (missing ;)');
+}
+
+function statement_done(const string& $s) : bool
+{
+    int32 $braces = 0;
+    usize $i = 0;
+
+    while ($i < $s->size()) {
+        uint8 $b = $s->byte($i);
+
+        if ($b == 123) {
+            $braces = $braces + 1;
+        } else if ($b == 125) {
+            $braces = $braces - 1;
+        } else if ($b == 59 && $braces == 0) {
+            return true;
+        }
+
+        $i = $i + 1;
+    }
+
+    return false;
+}
+
+function consume_decl(const string& $stmt, Scan& $out) : result<bool, string>
+{
+    string $t = str::trim($stmt);
+
+    if ($t->starts('GLFWAPI')) {
+        RawFunc $f = guard parse_proto($t) else ($e) {
+            return .error($e);
+        }
+
+        $out->funcs[] = $f;
+
+        return .ok(true);
+    }
+
+    if ($t->starts('typedef')) {
+        result<bool, string> $ok = parse_typedef($t, $out);
+
+        if ($ok->failed()) {
+            return .error($ok->failure());
+        }
+
+        return .ok(true);
+    }
+
+    return .error("unrecognised depth-1 declaration: {$t}");
+}
+
+function parse_proto(const string& $stmt) : result<RawFunc, string>
+{
+    usize $i = 7;
+    types::skip_spaces($stmt, $i);
+
+    usize $paren = find_param_paren($stmt, $i);
+
+    if ($paren >= $stmt->size()) {
+        return .error("GLFWAPI prototype missing '(': {$stmt}");
+    }
+
+    string $head = str::trim($stmt->sub($i, $paren - $i));
+    types::CDecl $d = guard types::parse_c_type($head) else ($e) {
+        return .error("GLFWAPI: {$e}");
+    }
+
+    if ($d->name->empty()) {
+        return .error("GLFWAPI prototype missing name: {$stmt}");
+    }
+
+    RawFunc $f = RawFunc();
+    $f->c_name = $d->name;
+    $f->ret_text = str::trim($head->sub(0, $head->size() - $d->name->size()));
+
+    usize $close = find_matching_paren($stmt, $paren);
+
+    if ($close >= $stmt->size()) {
+        return .error("GLFWAPI prototype missing ')': {$stmt}");
+    }
+
+    string $inside = $stmt->sub($paren + 1, $close - $paren - 1);
+    $f->params = split_params($inside);
+
+    return .ok($f);
+}
+
+function parse_typedef(const string& $stmt, Scan& $out) : result<bool, string>
+{
+    if (is_callback_typedef($stmt)) {
+        RawCallback $c = guard parse_callback($stmt) else ($e) {
+            return .error($e);
+        }
+
+        $out->callbacks[] = $c;
+
+        return .ok(true);
+    }
+
+    string $t = str::trim($stmt);
+    usize $i = 7;
+    types::skip_spaces($t, $i);
+
+    if (!types::at_keyword($t, $i, 'struct')) {
+        return .error("depth-1 typedef is not a recognised GLFW shape: {$t}");
+    }
+
+    $i = $i + 6;
+    types::skip_spaces($t, $i);
+    string $tag = types::take_ident($t, $i);
+
+    if ($tag->empty() || !$tag->starts('GLFW')) {
+        return .error("depth-1 typedef struct is not a GLFW type: {$t}");
+    }
+
+    types::skip_spaces($t, $i);
+
+    if ($i < $t->size() && $t->byte($i) == 123) {
+        RawStruct $st = guard parse_struct($t, $tag, $i) else ($e) {
+            return .error($e);
+        }
+
+        $out->structs[] = $st;
+
+        return .ok(true);
+    }
+
+    string $alias = types::take_ident($t, $i);
+
+    if ($alias->empty()) {
+        return .error("opaque typedef missing name: {$t}");
+    }
+
+    $out->opaques[] = RawOpaque($alias);
+
+    return .ok(true);
+}
+
+function is_callback_typedef(const string& $stmt) : bool
+{
+    usize $i = 0;
+
+    while ($i < $stmt->size()) {
+        if ($stmt->byte($i) == 40) {
+            usize $j = $i + 1;
+
+            while ($j < $stmt->size() && is_space($stmt->byte($j))) {
+                $j = $j + 1;
+            }
+
+            if ($j < $stmt->size() && $stmt->byte($j) == 42) {
+                return true;
+            }
+
+            return false;
+        }
+
+        $i = $i + 1;
+    }
+
+    return false;
+}
+
+function parse_callback(const string& $stmt) : result<RawCallback, string>
+{
+    usize $star_paren = 0;
+
+    while ($star_paren < $stmt->size()) {
+        if ($stmt->byte($star_paren) == 40) {
+            usize $j = $star_paren + 1;
+
+            while ($j < $stmt->size() && is_space($stmt->byte($j))) {
+                $j = $j + 1;
+            }
+
+            if ($j < $stmt->size() && $stmt->byte($j) == 42) {
+                break;
+            }
+        }
+
+        $star_paren = $star_paren + 1;
+    }
+
+    if ($star_paren >= $stmt->size()) {
+        return .error("callback typedef missing '(*': {$stmt}");
+    }
+
+    string $ret = str::trim($stmt->sub(7, $star_paren - 7));
+    usize $i = $star_paren + 1;
+
+    types::skip_spaces($stmt, $i);
+
+    if ($i >= $stmt->size() || $stmt->byte($i) != 42) {
+        return .error("callback typedef missing '*': {$stmt}");
+    }
+
+    $i = $i + 1;
+    types::skip_spaces($stmt, $i);
+    string $name = types::take_ident($stmt, $i);
+
+    if ($name->empty()) {
+        return .error("callback typedef missing name: {$stmt}");
+    }
+
+    types::skip_spaces($stmt, $i);
+
+    if ($i >= $stmt->size() || $stmt->byte($i) != 41) {
+        return .error("callback typedef missing ')' after name: {$stmt}");
+    }
+
+    $i = $i + 1;
+    types::skip_spaces($stmt, $i);
+
+    if ($i >= $stmt->size() || $stmt->byte($i) != 40) {
+        return .error("callback typedef missing parameter list: {$stmt}");
+    }
+
+    usize $close = find_matching_paren($stmt, $i);
+
+    if ($close >= $stmt->size()) {
+        return .error("callback typedef unterminated params: {$stmt}");
+    }
+
+    RawCallback $c = RawCallback();
+    $c->c_name = $name;
+    $c->ret_text = $ret;
+    $c->params = split_params($stmt->sub($i + 1, $close - $i - 1));
+
+    return .ok($c);
+}
+
+function parse_struct(const string& $t, const string& $tag, usize $open) : result<RawStruct, string>
+{
+    usize $close = $open;
+    int32 $depth = 0;
+
+    while ($close < $t->size()) {
+        uint8 $b = $t->byte($close);
+
+        if ($b == 123) {
+            $depth = $depth + 1;
+        } else if ($b == 125) {
+            $depth = $depth - 1;
+
+            if ($depth == 0) {
+                break;
+            }
+        }
+
+        $close = $close + 1;
+    }
+
+    if ($close >= $t->size() || $t->byte($close) != 125) {
+        return .error("unterminated struct {$tag}");
+    }
+
+    string $body = $t->sub($open + 1, $close - $open - 1);
+    usize $i = $close + 1;
+    types::skip_spaces($t, $i);
+    string $alias = types::take_ident($t, $i);
+
+    if ($alias->empty()) {
+        $alias = $tag;
+    }
+
+    RawStruct $st = RawStruct();
+    $st->c_name = $alias;
+
+    array<string> $fields = split_fields($body);
+    usize $f = 0;
+
+    while ($f < $fields->count()) {
+        string $ft = str::trim($fields[$f]);
+
+        if (!$ft->empty()) {
+            types::CDecl $d = guard types::parse_c_type($ft) else ($e) {
+                return .error("{$alias}.{$ft}: {$e}");
+            }
+
+            RawField $field = RawField();
+            $field->text = $ft;
+            $field->decl = $d;
+            $st->fields[] = $field;
+        }
+
+        $f = $f + 1;
+    }
+
+    return .ok($st);
+}
+
+function split_fields(const string& $body) : array<string>
+{
+    array<string> $out = array<string>();
+    usize $start = 0;
+    usize $i = 0;
+
+    while ($i < $body->size()) {
+        if ($body->byte($i) == 59) {
+            $out[] = $body->sub($start, $i - $start);
+            $start = $i + 1;
+        }
+
+        $i = $i + 1;
+    }
+
+    return $out;
+}
+
+function split_params(const string& $inside) : array<string>
+{
+    array<string> $out = array<string>();
+    string $s = str::trim($inside);
+
+    if ($s->empty() || $s == 'void') {
+        return $out;
+    }
+
+    usize $start = 0;
+    usize $i = 0;
+    int32 $depth = 0;
+
+    while ($i < $s->size()) {
+        uint8 $b = $s->byte($i);
+
+        if ($b == 40) {
+            $depth = $depth + 1;
+        } else if ($b == 41) {
+            $depth = $depth - 1;
+        } else if ($b == 44 && $depth == 0) {
+            string $p = str::trim($s->sub($start, $i - $start));
+
+            if (!$p->empty()) {
+                $out[] = $p;
+            }
+
+            $start = $i + 1;
+        }
+
+        $i = $i + 1;
+    }
+
+    string $tail = str::trim($s->sub($start, $s->size() - $start));
+
+    if (!$tail->empty()) {
+        $out[] = $tail;
+    }
+
+    return $out;
+}
+
+function find_param_paren(const string& $s, usize $from) : usize
+{
+    usize $i = $from;
+
+    while ($i < $s->size()) {
+        if ($s->byte($i) == 40) {
+            return $i;
+        }
+
+        $i = $i + 1;
+    }
+
+    return $s->size();
+}
+
+function find_matching_paren(const string& $s, usize $open) : usize
+{
+    int32 $depth = 0;
+    usize $i = $open;
+
+    while ($i < $s->size()) {
+        uint8 $b = $s->byte($i);
+
+        if ($b == 40) {
+            $depth = $depth + 1;
+        } else if ($b == 41) {
+            $depth = $depth - 1;
+
+            if ($depth == 0) {
+                return $i;
+            }
+        }
+
+        $i = $i + 1;
+    }
+
+    return $s->size();
+}
+
+function is_space(uint8 $b) : bool
+{
+    if ($b == 32 || $b == 9 || $b == 10 || $b == 13) {
+        return true;
+    }
+
+    return false;
+}
+
+public function strip_comments(const string& $src) : result<string, string>
+{
+    string $out = '';
+    $out->reserve($src->size());
+    usize $i = 0;
+    usize $n = $src->size();
+    bool $block = false;
+
+    while ($i < $n) {
+        uint8 $c = $src->byte($i);
+
+        if ($block) {
+            if ($c == 10) {
+                $out->push(10);
+            } else {
+                $out->push(32);
+            }
+
+            if ($c == 42 && $i + 1 < $n && $src->byte($i + 1) == 47) {
+                $out->push(32);
+                $i = $i + 2;
+                $block = false;
+                continue;
+            }
+
+            $i = $i + 1;
+            continue;
+        }
+
+        if ($c == 47 && $i + 1 < $n && $src->byte($i + 1) == 47) {
+            $i = $i + 2;
+
+            while ($i < $n && $src->byte($i) != 10) {
+                $out->push(32);
+                $i = $i + 1;
+            }
+
+            continue;
+        }
+
+        if ($c == 47 && $i + 1 < $n && $src->byte($i + 1) == 42) {
+            $out->push(32);
+            $out->push(32);
+            $i = $i + 2;
+            $block = true;
+            continue;
+        }
+
+        $out->push($c);
+        $i = $i + 1;
+    }
+
+    if ($block) {
+        return .error('unterminated /* comment in glfw3.h');
+    }
+
+    return .ok($out);
+}

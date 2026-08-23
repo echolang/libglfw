@@ -1,0 +1,217 @@
+/**
+ * Generator internals: naming, declarators, the constant evaluator, the
+ * 0x80000000 fold, refusal paths. No window server.
+ */
+
+test naming_strips_prefixes
+{
+    string $c = guard glfwgen::model::const_name('GLFW_KEY_ESCAPE') else ($e) {
+        die($e);
+    }
+    string $f = guard glfwgen::model::fn_name('glfwCreateWindow') else ($e) {
+        die($e);
+    }
+    string $s = guard glfwgen::model::struct_name('GLFWvidmode') else ($e) {
+        die($e);
+    }
+
+    assert($c == 'KEY_ESCAPE');
+    assert($f == 'createWindow');
+    assert($s == 'Vidmode');
+    assert(glfwgen::model::param_name('title', 0) == 'title');
+    assert(glfwgen::model::param_name('this', 3) == 'p3');
+}
+
+test naming_init_and_image
+{
+    string $f = guard glfwgen::model::fn_name('glfwInit') else ($e) {
+        die($e);
+    }
+    string $s = guard glfwgen::model::struct_name('GLFWimage') else ($e) {
+        die($e);
+    }
+
+    assert($f == 'init');
+    assert($s == 'Image');
+}
+
+test declarator_const_vidmode_star
+{
+    glfwgen::types::CDecl $d = guard glfwgen::types::parse_c_type('const GLFWvidmode*') else ($e) {
+        die($e);
+    }
+
+    assert($d->base == 'GLFWvidmode');
+    assert($d->base_const);
+    assert($d->stars == 1);
+
+    glfwgen::types::TypeEnv $env = glfwgen::types::TypeEnv();
+    $env->structs['GLFWvidmode'] = 'Vidmode';
+    string $ty = guard glfwgen::types::echo_type($d, false, 'glfwGetVideoMode', $env) else ($e) {
+        die($e);
+    }
+
+    assert($ty == 'ptr<const Vidmode>');
+}
+
+test declarator_const_char_star_star
+{
+    glfwgen::types::CDecl $d = guard glfwgen::types::parse_c_type('const char**') else ($e) {
+        die($e);
+    }
+
+    assert($d->base == 'char');
+    assert($d->base_const);
+    assert($d->stars == 2);
+
+    glfwgen::types::TypeEnv $env = glfwgen::types::TypeEnv();
+    string $ty = guard glfwgen::types::echo_type($d, false, 'glfwGetError', $env) else ($e) {
+        die($e);
+    }
+
+    assert($ty == 'ptr<ptr<const uint8>>');
+}
+
+test declarator_unsigned_short_star
+{
+    glfwgen::types::CDecl $d = guard glfwgen::types::parse_c_type('unsigned short* red') else ($e) {
+        die($e);
+    }
+
+    assert($d->base == 'unsigned short');
+    assert($d->stars == 1);
+    assert($d->name == 'red');
+
+    glfwgen::types::TypeEnv $env = glfwgen::types::TypeEnv();
+    string $ty = guard glfwgen::types::echo_type($d, false, 'GLFWgammaramp', $env) else ($e) {
+        die($e);
+    }
+
+    assert($ty == 'ptr<uint16>');
+}
+
+test declarator_void_star_return
+{
+    glfwgen::types::CDecl $d = guard glfwgen::types::parse_c_type('void *') else ($e) {
+        die($e);
+    }
+
+    glfwgen::types::TypeEnv $env = glfwgen::types::TypeEnv();
+    string $ty = guard glfwgen::types::echo_type($d, true, 'glfwGetWindowUserPointer', $env) else ($e) {
+        die($e);
+    }
+
+    assert($ty == 'ptr<uint8>');
+}
+
+test declarator_opaque_is_typed_pointer
+{
+    glfwgen::types::TypeEnv $env = glfwgen::types::TypeEnv();
+    $env->structs['GLFWwindow'] = 'Window';
+    $env->structs['GLFWmonitor'] = 'Monitor';
+
+    glfwgen::types::CDecl $bare = guard glfwgen::types::parse_c_type('GLFWwindow') else ($e) {
+        die($e);
+    }
+    result<string, string> $refused = glfwgen::types::echo_type($bare, false, 'bad', $env);
+    assert($refused->failed());
+
+    glfwgen::types::CDecl $win = guard glfwgen::types::parse_c_type('GLFWwindow*') else ($e) {
+        die($e);
+    }
+    string $wty = guard glfwgen::types::echo_type($win, true, 'glfwCreateWindow', $env) else ($e) {
+        die($e);
+    }
+    assert($wty == 'ptr<Window>');
+
+    glfwgen::types::CDecl $mons = guard glfwgen::types::parse_c_type('GLFWmonitor**') else ($e) {
+        die($e);
+    }
+    string $mty = guard glfwgen::types::echo_type($mons, true, 'glfwGetMonitors', $env) else ($e) {
+        die($e);
+    }
+    assert($mty == 'ptr<ptr<Monitor>>');
+}
+
+test declarator_c_string
+{
+    glfwgen::types::CDecl $title = guard glfwgen::types::parse_c_type('const char* title') else ($e) {
+        die($e);
+    }
+
+    assert(glfwgen::types::is_c_string($title));
+
+    glfwgen::types::CDecl $bytes = guard glfwgen::types::parse_c_type('const unsigned char* buttons') else ($e) {
+        die($e);
+    }
+
+    assert(!glfwgen::types::is_c_string($bytes));
+
+    glfwgen::types::CDecl $many = guard glfwgen::types::parse_c_type('const char** paths') else ($e) {
+        die($e);
+    }
+
+    assert(!glfwgen::types::is_c_string($many));
+}
+
+test declarator_unknown_base_refuses
+{
+    glfwgen::types::CDecl $d = guard glfwgen::types::parse_c_type('VkInstance') else ($e) {
+        die($e);
+    }
+
+    glfwgen::types::TypeEnv $env = glfwgen::types::TypeEnv();
+    result<string, string> $ty = glfwgen::types::echo_type($d, false, 'vk', $env);
+
+    assert($ty->failed());
+}
+
+test constant_eval_int_hex_alias_or
+{
+    ordered_map<string, int32> $known = ordered_map<string, int32>();
+
+    int32 $n = guard glfwgen::header::eval_value('256', $known) else ($e) {
+        die($e);
+    }
+    assert($n == 256);
+
+    int32 $h = guard glfwgen::header::eval_value('0x00010001', $known) else ($e) {
+        die($e);
+    }
+    assert($h == 65537);
+
+    int32 $neg = guard glfwgen::header::eval_value('-1', $known) else ($e) {
+        die($e);
+    }
+    assert($neg == -1);
+
+    $known['GLFW_KEY_MENU'] = 348;
+    int32 $alias = guard glfwgen::header::eval_value('GLFW_KEY_MENU', $known) else ($e) {
+        die($e);
+    }
+    assert($alias == 348);
+
+    $known['GLFW_HAT_RIGHT'] = 2;
+    $known['GLFW_HAT_UP'] = 1;
+    int32 $or = guard glfwgen::header::eval_value('(GLFW_HAT_RIGHT | GLFW_HAT_UP)', $known) else ($e) {
+        die($e);
+    }
+    assert($or == 3);
+}
+
+test constant_0x80000000_folds_to_int32
+{
+    int32 $v = guard glfwgen::header::parse_number('0x80000000') else ($e) {
+        die($e);
+    }
+
+    assert($v == -2147483648);
+}
+
+test constant_unknown_ident_refuses
+{
+    ordered_map<string, int32> $known = ordered_map<string, int32>();
+    result<int32, string> $r = glfwgen::header::eval_value('GLFW_MISSING', $known);
+
+    assert($r->failed());
+}

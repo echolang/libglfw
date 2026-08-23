@@ -1,0 +1,142 @@
+/*
+ * libglfw generate
+ *
+ * Parse argv, run the pipeline, write src/glfw.eco (or --check it). Every
+ * stage is a result; a failure is a line on stderr and exit 1.
+ */
+
+use glfwgen::model;
+use glfwgen::emit;
+
+const string DEFAULT_HEADER = '../third_party/glfw/include/GLFW/glfw3.h';
+const string DEFAULT_OUT = '../src/glfw.eco';
+
+struct Args
+{
+    string $header;
+    string $out;
+    bool $check;
+    bool $help;
+
+    constructor()
+    {
+        $this->header = DEFAULT_HEADER;
+        $this->out = DEFAULT_OUT;
+        $this->check = false;
+        $this->help = false;
+    }
+}
+
+function usage() : string
+{
+    return 'libglfw generate
+  --header PATH     glfw3.h (default ../third_party/glfw/include/GLFW/glfw3.h)
+  --out PATH        generated module (default ../src/glfw.eco)
+  --check           regenerate in memory, compare, write nothing
+';
+}
+
+function parse_args(const array<string>& $argv) : result<Args, string>
+{
+    Args $args = Args();
+    usize $i = 1;
+
+    while ($i < $argv->count()) {
+        string $a = $argv[$i];
+
+        if ($a == '--help' || $a == '-h') {
+            $args->help = true;
+            return .ok($args);
+        }
+
+        if ($a == '--check') {
+            $args->check = true;
+            $i = $i + 1;
+            continue;
+        }
+
+        if ($a == '--header' || $a == '--out') {
+            if ($i + 1 >= $argv->count()) {
+                return .error("{$a} needs a value");
+            }
+
+            string $v = $argv[$i + 1];
+
+            if ($a == '--header') {
+                $args->header = $v;
+            } else {
+                $args->out = $v;
+            }
+
+            $i = $i + 2;
+            continue;
+        }
+
+        return .error("unknown flag '{$a}'");
+    }
+
+    return .ok($args);
+}
+
+function invocation_of(const Args& $args) : string
+{
+    string $s = 'generate';
+
+    if ($args->header != DEFAULT_HEADER) {
+        $s->append(" --header {$args->header}");
+    }
+
+    if ($args->out != DEFAULT_OUT) {
+        $s->append(" --out {$args->out}");
+    }
+
+    return $s;
+}
+
+array<string> $argv = std::env::argv();
+Args $args = guard parse_args($argv) else ($e) {
+    die($e);
+}
+
+if ($args->help) {
+    std::io::print(usage());
+    std::env::exit(0);
+}
+
+string $header = guard std::io::readfile($args->header) else ($e) {
+    die($e->message());
+}
+
+model::Model $m = guard model::from_header($header) else ($e) {
+    die($e);
+}
+
+emit::Banner $banner = emit::Banner();
+$banner->invocation = invocation_of($args);
+$banner->version = emit::GLFW_VERSION;
+$banner->sha256 = emit::GLFW_SHA256;
+
+emit::Emitted $em = guard emit::emit_module($m, $banner) else ($e) {
+    die($e);
+}
+
+if ($args->check) {
+    string $have = guard std::io::readfile($args->out) else ($e) {
+        die("{$args->out} is missing or unreadable ({$e->message()}); rerun generate");
+    }
+
+    if ($have != $em->source) {
+        die("{$args->out} is out of date; rerun generate");
+    }
+
+    std::io::println("{$args->out} is up to date");
+    std::env::exit(0);
+}
+
+result<usize, std::io::ioerror> $wrote = std::io::writefile($args->out, $em->source);
+
+if ($wrote->failed()) {
+    die($wrote->failure()->message());
+}
+
+std::io::println("wrote {$args->out}: {$em->n_consts} constants, {$em->n_structs} structs, {$em->n_callbacks} callbacks, {$em->n_funcs} functions");

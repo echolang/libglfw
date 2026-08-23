@@ -1,0 +1,185 @@
+/**
+ * Scan the vendored glfw3.h. No window server.
+ */
+
+const string GLFW3_H = 'third_party/glfw/include/GLFW/glfw3.h';
+
+function load_scan() : glfwgen::header::Scan
+{
+    string $src = guard std::io::readfile(GLFW3_H) else ($e) {
+        die($e->message());
+    }
+
+    glfwgen::header::Scan $scan = guard glfwgen::header::scan($src) else ($e) {
+        die($e);
+    }
+
+    return $scan;
+}
+
+function load_model() : glfwgen::model::Model
+{
+    string $src = guard std::io::readfile(GLFW3_H) else ($e) {
+        die($e->message());
+    }
+
+    glfwgen::model::Model $m = guard glfwgen::model::from_header($src) else ($e) {
+        die($e);
+    }
+
+    return $m;
+}
+
+test header_create_window_has_five_params
+{
+    glfwgen::header::Scan $scan = load_scan();
+    bool $found = false;
+    usize $i = 0;
+
+    while ($i < $scan->funcs->count()) {
+        if ($scan->funcs[$i]->c_name == 'glfwCreateWindow') {
+            assert($scan->funcs[$i]->params->count() == 5);
+            $found = true;
+        }
+
+        $i = $i + 1;
+    }
+
+    assert($found);
+}
+
+test header_key_escape_is_256
+{
+    glfwgen::header::Scan $scan = load_scan();
+    bool $found = false;
+    usize $i = 0;
+
+    while ($i < $scan->consts->count()) {
+        if ($scan->consts[$i]->c_name == 'GLFW_KEY_ESCAPE') {
+            assert($scan->consts[$i]->value == 256);
+            $found = true;
+        }
+
+        $i = $i + 1;
+    }
+
+    assert($found);
+}
+
+test header_keyfun_has_five_args
+{
+    glfwgen::header::Scan $scan = load_scan();
+    bool $found = false;
+    usize $i = 0;
+
+    while ($i < $scan->callbacks->count()) {
+        if ($scan->callbacks[$i]->c_name == 'GLFWkeyfun') {
+            assert($scan->callbacks[$i]->params->count() == 5);
+            $found = true;
+        }
+
+        $i = $i + 1;
+    }
+
+    assert($found);
+}
+
+test header_vidmode_has_six_fields
+{
+    glfwgen::header::Scan $scan = load_scan();
+    bool $found = false;
+    usize $i = 0;
+
+    while ($i < $scan->structs->count()) {
+        if ($scan->structs[$i]->c_name == 'GLFWvidmode') {
+            assert($scan->structs[$i]->fields->count() == 6);
+            $found = true;
+        }
+
+        $i = $i + 1;
+    }
+
+    assert($found);
+}
+
+test header_vulkan_instance_functions_absent
+{
+    glfwgen::header::Scan $scan = load_scan();
+    bool $supported = false;
+    bool $extensions = false;
+    usize $i = 0;
+
+    while ($i < $scan->funcs->count()) {
+        string $n = $scan->funcs[$i]->c_name;
+
+        if ($n == 'glfwGetInstanceProcAddress' || $n == 'glfwCreateWindowSurface' || $n == 'glfwGetPhysicalDevicePresentationSupport' || $n == 'glfwInitVulkanLoader') {
+            die("vulkan-gated '{$n}' should not be scanned");
+        }
+
+        if ($n == 'glfwVulkanSupported') {
+            $supported = true;
+        }
+
+        if ($n == 'glfwGetRequiredInstanceExtensions') {
+            $extensions = true;
+        }
+
+        $i = $i + 1;
+    }
+
+    assert($supported);
+    assert($extensions);
+}
+
+test emit_is_deterministic
+{
+    glfwgen::model::Model $m = load_model();
+    glfwgen::emit::Banner $b = glfwgen::emit::Banner();
+    $b->invocation = 'generate';
+    $b->version = glfwgen::emit::GLFW_VERSION;
+    $b->sha256 = 'deadbeef';
+
+    glfwgen::emit::Emitted $a = guard glfwgen::emit::emit_module($m, $b) else ($e) {
+        die($e);
+    }
+    glfwgen::emit::Emitted $again = guard glfwgen::emit::emit_module($m, $b) else ($e) {
+        die($e);
+    }
+
+    assert($a->source == $again->source);
+    assert($a->source->contains('KEY_ESCAPE'));
+    assert($a->source->contains('public struct Window'));
+    assert($a->source->contains('public struct Monitor'));
+    assert($a->source->contains('public struct Cursor'));
+    assert($a->source->contains('function createWindow('));
+    assert($a->source->contains('string $title'));
+    assert($a->source->contains('function getWindowTitle(ptr<Window> $window) : string'));
+    assert($a->source->contains('ptr<const uint8> $procname'));
+    assert($a->source->contains('ptr<Window>'));
+    assert($a->source->contains('ptr<Monitor>'));
+    assert($a->source->contains('glfwCreateWindow as c_createWindow'));
+    assert($a->source->contains('glfwInitAllocator as c_initAllocator'));
+    assert($a->source->contains('ptr<__Gamepadstate>'));
+    assert(!$a->source->contains('uint8 $buttons0'));
+    assert(!$a->source->contains('public struct Gamepadstate'));
+    assert(!$a->source->contains('glfwCreateWindowSurface'));
+}
+
+test generated_source_matches_committed
+{
+    glfwgen::model::Model $m = load_model();
+    glfwgen::emit::Banner $b = glfwgen::emit::Banner();
+    $b->invocation = 'generate';
+    $b->version = glfwgen::emit::GLFW_VERSION;
+    $b->sha256 = glfwgen::emit::GLFW_SHA256;
+
+    glfwgen::emit::Emitted $em = guard glfwgen::emit::emit_module($m, $b) else ($e) {
+        die($e);
+    }
+
+    string $have = guard std::io::readfile('src/glfw.eco') else ($e) {
+        die($e->message());
+    }
+
+    assert($have == $em->source);
+}
