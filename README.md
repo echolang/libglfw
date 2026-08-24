@@ -1,21 +1,24 @@
 # libglfw
 
-libglfw gives your Echo program a window, an OpenGL context, and keyboard and mouse input. GLFW 3.4 is vendored and compiled into your module, so you write `#[depends:]` and nothing else.
+libglfw gives your Echo program a window, an OpenGL context, and keyboard and mouse input. GLFW 3.4 is vendored and compiled into your module, so you add it with epm and nothing else.
 
 The surface is GLFW's, with Echo names. If you know `glfwCreateWindow`, you know `glfw::createWindow`. GLFW's own documentation still applies.
 
 ## Getting started
 
-Place this repository beside your project and depend on it:
+From your project directory:
 
-```echo
-#[module: "myapp"]
-#[depends: "../libglfw"]
-#[depends: "../libopengl"]
-#[sources: "src/*.eco"]
+```bash
+epm add echolang/libglfw --git https://github.com/echolang/libglfw --range ^0.1
 ```
 
-libglfw does not depend on [libopengl](../libopengl). Add that line only if you draw.
+That writes a `#[requires:]` line and vendors the sources. Echo sees the `glfw` namespace as soon as the module loads.
+
+libglfw does not depend on [libopengl](https://github.com/echolang/libopengl). Add that one too if you draw:
+
+```bash
+epm add echolang/libopengl --git https://github.com/echolang/libopengl --range ^0.1
+```
 
 The module builds on Darwin, Linux (X11), and Windows. On Linux you need the X11 and GL headers to compile. Wayland is not supported.
 

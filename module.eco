@@ -2,8 +2,7 @@
  * libglfw - GLFW 3.4 bindings for Echo.
  *
  * The C library is vendored and compiled in. Bindings are generated from
- * include/GLFW/glfw3.h. A consumer writes `#[depends: "../libglfw"]` and
- * nothing else.
+ * include/GLFW/glfw3.h. A consumer adds it with epm and nothing else.
  */
 
 #[module: "libglfw"]
