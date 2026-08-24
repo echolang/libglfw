@@ -10,9 +10,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  ECHO_TAG: v0.3.0
-
 jobs:
   build-test:
     name: ${{ matrix.os }}
@@ -20,20 +17,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: macos-15,     asset: echo-macos-arm64.tar.gz  }
-          - { os: ubuntu-24.04, asset: echo-linux-x86_64.tar.gz }
-          - { os: windows-2022, asset: echo-windows-x86_64.zip  }
+        os: [macos-15, ubuntu-24.04, windows-2022]
 
     steps:
       - uses: actions/checkout@v5
+
+      - uses: echolang/setup-echo@v1
+        with:
+          version: v0.3.0
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            clang \
             libx11-dev \
             libxcursor-dev \
             libxrandr-dev \
@@ -41,48 +38,6 @@ jobs:
             libxi-dev \
             libxext-dev \
             libgl-dev
-
-      - name: Cache Echo toolchain download
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/echo-dl
-          key: echo-${{ matrix.os }}-${{ env.ECHO_TAG }}
-
-      - name: Install Echo (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          set -euo pipefail
-          dl="$RUNNER_TEMP/echo-dl"
-          mkdir -p "$dl" "$HOME/.echo/bin"
-          if [ ! -f "$dl/${{ matrix.asset }}" ]; then
-            curl -fsSL -o "$dl/${{ matrix.asset }}" \
-              "https://github.com/echolang/echo/releases/download/$ECHO_TAG/${{ matrix.asset }}"
-          fi
-          tar -xzf "$dl/${{ matrix.asset }}" -C "$HOME/.echo/bin"
-          chmod +x "$HOME/.echo/bin/echoc" "$HOME/.echo/bin/epm"
-          echo "$HOME/.echo/bin" >> "$GITHUB_PATH"
-
-      - name: Install Echo (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $dl = "$env:RUNNER_TEMP\echo-dl"
-          New-Item -ItemType Directory -Force -Path $dl | Out-Null
-          $zip = "$dl\${{ matrix.asset }}"
-          if (-not (Test-Path $zip)) {
-            curl.exe -fsSL -o $zip `
-              "https://github.com/echolang/echo/releases/download/$env:ECHO_TAG/${{ matrix.asset }}"
-          }
-          $root = "$env:RUNNER_TEMP\echo"
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
-          tar.exe -xf $zip -C $root
-          "$root\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Toolchain versions
-        run: |
-          echoc --version
-          epm --version
 
       - name: Build and test
         run: echoc test
