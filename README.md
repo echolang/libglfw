@@ -38,7 +38,7 @@ glfw::windowHint(glfw::OPENGL_FORWARD_COMPAT, glfw::TRUE);
 
 ptr<glfw::Window> $window = glfw::createWindow(800, 600, 'libglfw', null, null);
 
-if ($window:$ == null) {
+if ($window == null) {
     glfw::terminate();
     die(glfw::error_message());
 }
@@ -81,7 +81,7 @@ if (!glfw::init()) {
 
 Compare against the constant. `error_message()` is a `string`, never null, and empty when GLFW has nothing to say.
 
-A failed `createWindow` is a null handle. `:$` names the address rather than the thing at it, which is the `$window:$ == null` check above.
+A failed `createWindow` is a null handle. Window, Monitor, and Cursor are incomplete types, so a plain read of the pointer is the handle: `$window == null`. `:$` names the slot, which is the wrong check.
 
 GLFW will abort if you pass a null monitor into calls that require one. `getPrimaryMonitor` returns null whenever GLFW is not initialized, so check the handle.
 
@@ -138,7 +138,7 @@ mtl::Layer $layer = mtl::Layer(attachView: glfw::getCocoaWindow($window), $devic
 
 ## Handles
 
-Windows, monitors, and cursors stay opaque. GLFW hands them to you as `ptr<glfw::Window>` (and the same for `Monitor` and `Cursor`) and GLFW frees them. The compiler will not let you pass a monitor where a window belongs.
+Windows, monitors, and cursors stay opaque. They are `extern struct` names with no layout, so `ptr<glfw::Window>` is not `ptr<glfw::Monitor>`, you cannot construct one, and a read of the pointer is the handle itself. GLFW hands them to you and GLFW frees them.
 
 When a call writes two values, take the address of a local:
 
@@ -199,12 +199,12 @@ glfw::setErrorCallback(&on_error);
 
 ## Gamepad
 
-`glfw::Gamepadstate` uses Echo arrays so you can index with the `GAMEPAD_` constants:
+`glfw::Gamepadstate` is GLFW's layout: 15 buttons, 6 axes. Index with the `GAMEPAD_` constants:
 
 ```echo
 glfw::Gamepadstate $state = glfw::Gamepadstate();
 
-if (glfw::getGamepadState(0, $state) == glfw::TRUE) {
+if (glfw::getGamepadState(0, &$state) == glfw::TRUE) {
     if ($state->buttons[glfw::GAMEPAD_BUTTON_A] == glfw::PRESS) {
         // jump
     }

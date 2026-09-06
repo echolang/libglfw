@@ -51,7 +51,7 @@ glfw::windowHint(glfw::OPENGL_FORWARD_COMPAT, glfw::TRUE);
 
 ptr<glfw::Window> $window = glfw::createWindow(800, 600, 'libglfw', null, null);
 
-if ($window:$ == null) {
+if ($window == null) {
     glfw::terminate();
     die(glfw::error_message());
 }

@@ -10,9 +10,9 @@ test opaque_handles_are_distinct_null
     ptr<glfw::Monitor> $monitor = null;
     ptr<glfw::Cursor> $cursor = null;
 
-    assert($window:$ == null);
-    assert($monitor:$ == null);
-    assert($cursor:$ == null);
+    assert($window == null);
+    assert($monitor == null);
+    assert($cursor == null);
 }
 
 test constants
@@ -63,15 +63,15 @@ test error_message_before_init
 
 test gamepadstate_c_layout
 {
-    assert(mem::size<glfw::__Gamepadstate>() == 40);
-    assert(mem::align<glfw::__Gamepadstate>() == 4);
+    assert(mem::size<glfw::Gamepadstate>() == 40);
+    assert(mem::align<glfw::Gamepadstate>() == 4);
 
     glfw::Gamepadstate $state = glfw::Gamepadstate();
-    int32 $ok = glfw::getGamepadState(0, $state);
+    int32 $ok = glfw::getGamepadState(0, &$state);
 
     assert($ok == glfw::FALSE);
-    assert($state->buttons->count() == 15);
-    assert($state->axes->count() == 6);
+    assert($state->buttons[0] == 0);
+    assert($state->axes[0] == 0.0);
 }
 
 test init_vulkan_loader_before_init

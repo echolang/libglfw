@@ -3,6 +3,12 @@
  * 0x80000000 fold, refusal paths. No window server.
  */
 
+test strip_cr_drops_carriage_return
+{
+    assert(glfwgen::emit::strip_cr("a\r\nb") == "a\nb");
+    assert(glfwgen::emit::strip_cr('already lf') == 'already lf');
+}
+
 test naming_strips_prefixes
 {
     string $c = guard glfwgen::model::const_name('GLFW_KEY_ESCAPE') else ($e) {
@@ -152,6 +158,29 @@ test declarator_c_string
     }
 
     assert(!glfwgen::types::is_c_string($many));
+}
+
+test declarator_struct_array_field
+{
+    glfwgen::types::CDecl $d = guard glfwgen::types::parse_c_type('unsigned char buttons[15]') else ($e) {
+        die($e);
+    }
+
+    assert($d->base == 'unsigned char');
+    assert($d->stars == 0);
+    assert($d->array_len == 15);
+    assert($d->name == 'buttons');
+
+    glfwgen::types::TypeEnv $env = glfwgen::types::TypeEnv();
+    string $field = guard glfwgen::types::echo_field_type($d, 'GLFWgamepadstate.buttons', $env) else ($e) {
+        die($e);
+    }
+    string $param = guard glfwgen::types::echo_type($d, false, 'decayed', $env) else ($e) {
+        die($e);
+    }
+
+    assert($field == 'uint8[15]');
+    assert($param == 'ptr<uint8>');
 }
 
 test declarator_unknown_base_refuses

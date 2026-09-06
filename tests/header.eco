@@ -148,9 +148,9 @@ test emit_is_deterministic
 
     assert($a->source == $again->source);
     assert($a->source->contains('KEY_ESCAPE'));
-    assert($a->source->contains('public struct Window'));
-    assert($a->source->contains('public struct Monitor'));
-    assert($a->source->contains('public struct Cursor'));
+    assert($a->source->contains('public extern struct Window'));
+    assert($a->source->contains('public extern struct Monitor'));
+    assert($a->source->contains('public extern struct Cursor'));
     assert($a->source->contains('function createWindow('));
     assert($a->source->contains('string $title'));
     assert($a->source->contains('function getWindowTitle(ptr<Window> $window) : string'));
@@ -159,9 +159,12 @@ test emit_is_deterministic
     assert($a->source->contains('ptr<Monitor>'));
     assert($a->source->contains('glfwCreateWindow as c_createWindow'));
     assert($a->source->contains('glfwInitAllocator as c_initAllocator'));
-    assert($a->source->contains('ptr<__Gamepadstate>'));
+    assert($a->source->contains('ptr<Gamepadstate>'));
+    assert($a->source->contains('uint8[15] $buttons'));
+    assert($a->source->contains('float32[6] $axes'));
+    assert($a->source->contains('public struct Gamepadstate'));
     assert(!$a->source->contains('uint8 $buttons0'));
-    assert(!$a->source->contains('public struct Gamepadstate'));
+    assert(!$a->source->contains('__Gamepadstate'));
     assert(!$a->source->contains('glfwCreateWindowSurface'));
 }
 
@@ -181,5 +184,5 @@ test generated_source_matches_committed
         die($e->message());
     }
 
-    assert($have == $em->source);
+    assert(glfwgen::emit::strip_cr($have) == $em->source);
 }

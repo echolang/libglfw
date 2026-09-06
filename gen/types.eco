@@ -34,14 +34,12 @@ public struct TypeEnv
     ordered_map<string, bool> $procs;
     ordered_map<string, string> $callbacks;
     ordered_map<string, string> $structs;
-    ordered_map<string, string> $raw_structs;
 
     constructor()
     {
         $this->procs = ordered_map<string, bool>();
         $this->callbacks = ordered_map<string, string>();
         $this->structs = ordered_map<string, string>();
-        $this->raw_structs = ordered_map<string, string>();
     }
 }
 
@@ -217,6 +215,28 @@ public function echo_type(const CDecl& $d, bool $as_return, const string& $where
     }
 
     return .ok(wrap_ptr($inner, $stars));
+}
+
+/**
+ * Struct-field spelling. Params decay `[N]` to a pointer; a field keeps `T[N]`.
+ */
+public function echo_field_type(const CDecl& $d, const string& $where, const TypeEnv& $env) : result<string, string>
+{
+    if ($d->array_len < 0) {
+        return .error("{$where}: unbounded array field");
+    }
+
+    if ($d->array_len > 0) {
+        CDecl $elem = $d;
+        $elem->array_len = 0;
+        string $inner = guard echo_type($elem, false, $where, $env) else ($e) {
+            return .error($e);
+        }
+
+        return .ok("{$inner}[{$d->array_len}]");
+    }
+
+    return echo_type($d, false, $where, $env);
 }
 
 public function wrap_ptr(const string& $inner, int32 $stars) : string

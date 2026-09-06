@@ -125,7 +125,7 @@ if ($args->check) {
         die("{$args->out} is missing or unreadable ({$e->message()}); rerun generate");
     }
 
-    if ($have != $em->source) {
+    if (emit::strip_cr($have) != $em->source) {
         die("{$args->out} is out of date; rerun generate");
     }
 

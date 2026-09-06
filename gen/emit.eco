@@ -54,7 +54,7 @@ public function emit_module(const model::Model& $m, const Banner& $banner) : res
 
     Emitted $out = Emitted();
     $out->n_consts = $m->consts->count();
-    $out->n_structs = count_emitted_structs($m);
+    $out->n_structs = $m->structs->count();
     $out->n_callbacks = $m->callbacks->count();
     $out->n_funcs = $m->funcs->count();
     $out->source->reserve(262144);
@@ -71,20 +71,23 @@ public function emit_module(const model::Model& $m, const Banner& $banner) : res
     return .ok($out);
 }
 
-function count_emitted_structs(const model::Model& $m) : usize
+public function strip_cr(const string& $s) : string
 {
-    usize $n = 0;
+    string $out = '';
+    $out->reserve($s->size());
     usize $i = 0;
 
-    while ($i < $m->structs->count()) {
-        if (!$m->structs[$i]->hand_written) {
-            $n = $n + 1;
+    while ($i < $s->size()) {
+        uint8 $b = $s->byte($i);
+
+        if ($b != 13) {
+            $out->push($b);
         }
 
         $i = $i + 1;
     }
 
-    return $n;
+    return $out;
 }
 
 function check_policy(const model::Model& $m) : result<bool, string>
@@ -145,25 +148,47 @@ function emit_structs(string& $out, const model::Model& $m) : void
     while ($i < $m->structs->count()) {
         model::StructDef $s = $m->structs[$i];
 
-        if ($s->hand_written) {
+        if ($s->fields->count() == 0) {
+            string $note = "// Opaque. A ptr<{$s->echo_name}> is a {$s->c_name}*.\n";
+            $out->append($note);
+            $out->append("public extern struct {$s->echo_name};\n\n");
             $i = $i + 1;
             continue;
-        }
-
-        if ($s->fields->count() == 0) {
-            string $note = "// Opaque. A ptr<{$s->echo_name}> is a {$s->c_name}*; never construct one.\n";
-            $out->append($note);
         }
 
         string $line = "public struct {$s->echo_name}\n";
         $out->append($line);
         $out->append("{\n");
         usize $f = 0;
+        bool $has_array = false;
 
         while ($f < $s->fields->count()) {
             $line = "    {$s->fields[$f]->echo_type} ${$s->fields[$f]->echo_name};\n";
             $out->append($line);
+
+            if ($s->fields[$f]->echo_type->contains('[')) {
+                $has_array = true;
+            }
+
             $f = $f + 1;
+        }
+
+        if ($has_array) {
+            $out->append('\n    constructor()\n    {\n');
+            $f = 0;
+
+            while ($f < $s->fields->count()) {
+                if ($s->fields[$f]->echo_type->contains('[')) {
+                    $line = "        {$s->fields[$f]->echo_type} ${$s->fields[$f]->echo_name};\n";
+                    $out->append($line);
+                    $line = "        $this->{$s->fields[$f]->echo_name} = mv ${$s->fields[$f]->echo_name};\n";
+                    $out->append($line);
+                }
+
+                $f = $f + 1;
+            }
+
+            $out->append("    }\n");
         }
 
         $out->append("}\n\n");
@@ -207,11 +232,6 @@ function emit_wrappers(string& $out, const model::Model& $m) : void
 
     while ($i < $m->funcs->count()) {
         model::Func $fn = $m->funcs[$i];
-
-        if ($fn->skip_wrapper) {
-            $i = $i + 1;
-            continue;
-        }
 
         string $args = wrapper_args($fn);
         string $call = call_args($fn);

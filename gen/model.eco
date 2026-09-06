@@ -49,14 +49,12 @@ public struct StructDef
     string $c_name;
     string $echo_name;
     array<Field> $fields;
-    bool $hand_written;
 
     constructor()
     {
         $this->c_name = '';
         $this->echo_name = '';
         $this->fields = array<Field>();
-        $this->hand_written = false;
     }
 }
 
@@ -105,7 +103,6 @@ public struct Func
     string $ret_echo;
     string $ret_extern;
     bool $str_out;
-    bool $skip_wrapper;
     array<Param> $params;
 
     constructor()
@@ -115,7 +112,6 @@ public struct Func
         $this->ret_echo = 'void';
         $this->ret_extern = 'void';
         $this->str_out = false;
-        $this->skip_wrapper = false;
         $this->params = array<Param>();
     }
 }
@@ -273,10 +269,6 @@ public function bind(const header::Scan& $scan) : result<Model, string>
             $f = $f + 1;
         }
 
-        if ($st->hand_written) {
-            $m->env->raw_structs[$raw->c_name] = "__{$st->echo_name}";
-        }
-
         $m->structs[] = $st;
         $i = $i + 1;
     }
@@ -409,14 +401,7 @@ public function param_name(const string& $raw, usize $index) : string
 function bind_fields(const header::RawField& $raw, StructDef& $st, const types::TypeEnv& $env) : result<bool, string>
 {
     types::CDecl $d = $raw->decl;
-
-    if ($d->array_len > 0) {
-        $st->hand_written = true;
-
-        return .ok(true);
-    }
-
-    string $ty = guard types::echo_type($d, false, "{$st->c_name}.{$d->name}", $env) else ($e) {
+    string $ty = guard types::echo_field_type($d, "{$st->c_name}.{$d->name}", $env) else ($e) {
         return .error($e);
     }
 
@@ -433,10 +418,6 @@ function bind_func(const header::RawFunc& $raw, const string& $echo, const types
 
     string $ret_extern = guard types::echo_type($ret_d, true, $raw->c_name, $env) else ($e) {
         return .error($e);
-    }
-
-    if ($env->raw_structs->has($ret_d->base)) {
-        $ret_extern = raw_echo_type($ret_d, $env);
     }
 
     Func $fn = Func();
@@ -465,10 +446,7 @@ function bind_func(const header::RawFunc& $raw, const string& $echo, const types
         string $echo_ty = $extern_ty;
         bool $to_cstr = false;
 
-        if ($env->raw_structs->has($d->base)) {
-            $extern_ty = raw_echo_type($d, $env);
-            $fn->skip_wrapper = true;
-        } else if (types::is_c_string($d) && !overrides::keep_c_string($raw->c_name)) {
+        if (types::is_c_string($d) && !overrides::keep_c_string($raw->c_name)) {
             $echo_ty = 'string';
             $to_cstr = true;
         }
@@ -485,23 +463,6 @@ function bind_func(const header::RawFunc& $raw, const string& $echo, const types
     }
 
     return .ok($fn);
-}
-
-function raw_echo_type(const types::CDecl& $d, const types::TypeEnv& $env) : string
-{
-    int32 $stars = $d->stars;
-
-    if ($d->array_len != 0) {
-        $stars = $stars + 1;
-    }
-
-    string $inner = $env->raw_structs->get($d->base);
-
-    if ($d->base_const) {
-        $inner = "const {$inner}";
-    }
-
-    return types::wrap_ptr($inner, $stars);
 }
 
 function with_first(const string& $s, bool $upper) : string
