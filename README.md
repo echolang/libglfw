@@ -110,6 +110,32 @@ String returns are Echo strings too. A null char pointer from C arrives as `''`,
 
 The one exception is `glfw::getProcAddress`, which keeps C's pointer signature so `&glfw::getProcAddress` fits `gl::load`.
 
+## Vulkan and native handles
+
+The generator reads `glfw3.h` under no extra include. That skips the `VK_VERSION_1_0` block and all of `glfw3native.h`, so those entry points are hand-written. They take handle words, not `vk::` types — libglfw does not depend on libvulkan.
+
+Hand GLFW the same ICD you opened, **before** `glfw::init`. On Darwin that is MoltenVK; skip it and GLFW opens `libvulkan.1.dylib` (or nothing) and the surface does not match the instance:
+
+```echo
+glfw::initVulkanLoader(vk::getInstanceProcAddrPtr());
+glfw::windowHint(glfw::CLIENT_API, glfw::NO_API);
+```
+
+`createWindowSurface` writes a `VkSurfaceKHR` as `uint64`. `$instance` is the instance handle word; `$allocator` is null for the default:
+
+```echo
+uint64 $surface = 0;
+int32 $code = glfw::createWindowSurface($instance->handle, $window, null, &$surface);
+```
+
+On Darwin, `getCocoaWindow` is the `NSWindow*` as `ptr<uint8>`. Hand it to Metal:
+
+```echo
+mtl::Layer $layer = mtl::Layer(attachView: glfw::getCocoaWindow($window), $device);
+```
+
+`getInstanceProcAddress` takes an instance plus a name. That will not compile as `vk::load`'s getproc, which is the point: `initVulkanLoader` is the GLFW hook, not a signature lie.
+
 ## Handles
 
 Windows, monitors, and cursors stay opaque. GLFW hands them to you as `ptr<glfw::Window>` (and the same for `Monitor` and `Cursor`) and GLFW frees them. The compiler will not let you pass a monitor where a window belongs.

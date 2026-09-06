@@ -73,3 +73,17 @@ test gamepadstate_c_layout
     assert($state->buttons->count() == 15);
     assert($state->axes->count() == 6);
 }
+
+test init_vulkan_loader_before_init
+{
+    glfw::initVulkanLoader(null);
+}
+
+test get_instance_proc_address_before_init
+{
+    string $name = 'vkCreateInstance';
+    ptr<uint8> $p = glfw::getInstanceProcAddress(0, $name->cstr());
+
+    assert($p:$ == null);
+    assert(glfw::getError(null) == glfw::NOT_INITIALIZED);
+}

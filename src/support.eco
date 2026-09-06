@@ -1,6 +1,8 @@
 /**
  * Hand-written surface: C-string helper used by generated wrappers, the
- * gamepad fill-struct (C layout is not an Echo array), and error_message.
+ * gamepad fill-struct (C layout is not an Echo array), error_message, and
+ * the Vulkan / Cocoa native seam the generator cannot emit (Vk* types and
+ * glfw3native.h sit behind conditionals).
  */
 
 namespace glfw;
@@ -116,3 +118,69 @@ public function getGamepadState(int32 $jid, Gamepadstate& $state) : int32
 
     return $ok;
 }
+
+internal extern {
+    function glfwInitVulkanLoader as c_initVulkanLoader(ptr<uint8> $loader) : void;
+    function glfwGetInstanceProcAddress as c_getInstanceProcAddress(uint64 $instance, ptr<const uint8> $procname) : ptr<uint8>;
+    function glfwGetPhysicalDevicePresentationSupport as c_getPhysicalDevicePresentationSupport(
+        uint64 $instance,
+        uint64 $device,
+        uint32 $queuefamily
+    ) : int32;
+    function glfwCreateWindowSurface as c_createWindowSurface(
+        uint64 $instance,
+        ptr<Window> $window,
+        ptr<uint8> $allocator,
+        ptr<uint64> $surface
+    ) : int32;
+}
+
+/**
+ * Hand GLFW the `vkGetInstanceProcAddr` from `vk::getInstanceProcAddrPtr`.
+ * Needed on Darwin when the ICD is MoltenVK rather than `libvulkan.1.dylib`.
+ */
+public function initVulkanLoader(ptr<uint8> $loader) : void
+{
+    c_initVulkanLoader($loader);
+}
+
+#[inline]
+public function getInstanceProcAddress(uint64 $instance, ptr<const uint8> $procname) : ptr<uint8>
+{
+    return c_getInstanceProcAddress($instance, $procname);
+}
+
+#[inline]
+public function getPhysicalDevicePresentationSupport(uint64 $instance, uint64 $device, uint32 $queuefamily) : int32
+{
+    return c_getPhysicalDevicePresentationSupport($instance, $device, $queuefamily);
+}
+
+/**
+ * Create a `VkSurfaceKHR` for this window. `$instance` is the Vulkan
+ * instance handle word. `$surface` is written as a non-dispatchable handle.
+ */
+public function createWindowSurface(
+    uint64 $instance,
+    ptr<Window> $window,
+    ptr<uint8> $allocator,
+    ptr<uint64> $surface
+) : int32
+{
+    return c_createWindowSurface($instance, $window, $allocator, $surface);
+}
+
+#[if: os == darwin]
+internal extern {
+    function glfwGetCocoaWindow as cGetCocoaWindow(ptr<Window> $window) : ptr<uint8>;
+}
+
+/**
+ * The NSWindow* behind this GLFW window, as an opaque pointer.
+ * Hand it to `mtl::Layer(attachView: ...)`.
+ */
+public function getCocoaWindow(ptr<Window> $window) : ptr<uint8>
+{
+    return cGetCocoaWindow($window);
+}
+#[end]
