@@ -6,7 +6,7 @@
  */
 
 #[module: "libglfw"]
-#[version: "0.1.0"] // x-release-please-version
+#[version: "0.1.1"] // x-release-please-version
 #[epm::license: "MIT"]
 #[epm::description: "GLFW 3.4 bindings for Echo, C library vendored and compiled in"]
 
