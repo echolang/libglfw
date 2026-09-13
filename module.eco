@@ -32,6 +32,7 @@
 #[if: os == darwin]
 #[cc: define { _GLFW_COCOA: 1 }]
 #[cc: sources [
+    "src/cocoa_view.m",
     "third_party/glfw/src/cocoa_init.m",
     "third_party/glfw/src/cocoa_joystick.m",
     "third_party/glfw/src/cocoa_monitor.m",

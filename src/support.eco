@@ -77,14 +77,25 @@ public function createWindowSurface(
 #[if: os == darwin]
 internal extern {
     function glfwGetCocoaWindow as cGetCocoaWindow(ptr<Window> $window) : ptr<uint8>;
+    function glfw_echo_cocoa_view as cGetCocoaView(ptr<Window> $window) : ptr<uint8>;
 }
 
 /**
  * The NSWindow* behind this GLFW window, as an opaque pointer.
- * Hand it to `mtl::Layer(attachView: ...)`.
+ * Display-link / refresh queries want this; Metal attach wants
+ * `getCocoaView`.
  */
 public function getCocoaWindow(ptr<Window> $window) : ptr<uint8>
 {
     return cGetCocoaWindow($window);
+}
+
+/**
+ * The NSView* (contentView) behind this GLFW window. Hand it to
+ * `mtl::Layer(nsView: ...)`.
+ */
+public function getCocoaView(ptr<Window> $window) : ptr<uint8>
+{
+    return cGetCocoaView($window);
 }
 #[end]
