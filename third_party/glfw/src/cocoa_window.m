@@ -380,7 +380,9 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
 
 - (BOOL)wantsUpdateLayer
 {
-    return YES;
+    // NO_API (Metal/Vulkan) installs its own CAMetalLayer. YES here makes AppKit
+    // layer-back the view first, and WindowServer then vsyncs that wrapper.
+    return window->context.client != GLFW_NO_API;
 }
 
 - (void)updateLayer
